@@ -6,28 +6,38 @@ const ctrl = require('../../controllers/report.controller');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const { requireRole } = require('../../middlewares/role.middleware');
 
-// Nhân viên & quản lý đều có quyền xem báo cáo
+/**
+ * Reports — staff & admin access
+ * Tất cả endpoint phía dưới yêu cầu đăng nhập với role: staff | admin
+ */
 router.use(requireAuth, requireRole(['staff', 'admin']));
 
-// Tổng quan theo khoảng thời gian
+// GET /api/v1/reports/summary
+// Tổng quan trong khoảng thời gian
 router.get('/reports/summary', ctrl.summary);
 
-// Báo cáo theo ngày (1 ngày cụ thể)
+// GET /api/v1/reports/daily
+// Báo cáo theo 1 ngày
 router.get('/reports/daily', ctrl.daily);
 
-// Chuỗi doanh thu (groupBy=day|month)
+// GET /api/v1/reports/revenue
+// Time series doanh thu (groupBy=day|month)
 router.get('/reports/revenue', ctrl.revenue);
 
-// Top sản phẩm (theo qty|amount)
+// GET /api/v1/reports/top-products
+// Top sản phẩm (by qty|amount)
 router.get('/reports/top-products', ctrl.topProducts);
 
-// Top bàn (theo minutes|amount)
+// GET /api/v1/reports/top-tables
+// Top bàn (by minutes|amount)
 router.get('/reports/top-tables', ctrl.topTables);
 
-// Hiệu suất theo nhân viên
+// GET /api/v1/reports/staff
+// Doanh thu theo nhân viên
 router.get('/reports/staff', ctrl.byStaff);
 
-// Snapshot dashboard hôm nay
+// GET /api/v1/reports/dashboard
+// Snapshot dashboard (hôm nay)
 router.get('/reports/dashboard', ctrl.dashboard);
 
 module.exports = router;

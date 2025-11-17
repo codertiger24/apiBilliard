@@ -1,54 +1,73 @@
 // routes/v1/index.js
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const pkg = (() => { try { return require('../../package.json'); } catch { return { name: 'apiBiliard', version: '0.0.0' }; } })();
-
 const router = express.Router();
 
-router.get('/health', (req, res) => {
-  res.json({
-    status: 200,
-    message: 'OK',
-    data: {
-      app: pkg.name || 'apiBiliard',
-      version: pkg.version || '0.0.0',
-      node: process.version,
-      env: process.env.NODE_ENV || 'development',
-      requestId: req.id || null,
-      now: new Date(),
-    },
-  });
-});
-
-router.get('/version', (req, res) => {
-  res.json({
-    status: 200,
-    message: 'OK',
-    data: { app: pkg.name || 'apiBiliard', version: pkg.version || '0.0.0', build: process.env.BUILD_ID || null },
-  });
-});
-
-// ---- Mount các route module nếu có ----
-function mountIf(fileBase) {
-  const full = path.join(__dirname, fileBase + '.js');
-  if (fs.existsSync(full)) {
-    router.use(require(full));
-  } else {
-    console.warn('[routes] skip missing', 'v1/' + fileBase + '.js');
-  }
+// Thông tin package (dùng cho /version; nếu lỗi thì dùng giá trị mặc định)
+let pkg = { name: 'apiBiliard', version: '0.0.0' };
+try {
+  // eslint-disable-next-line global-require
+  pkg = require('../../package.json');
+} catch (e) {
+  // ignore nếu không đọc được package.json
 }
 
-mountIf('auth.routes');
-mountIf('users.routes');
-mountIf('tables.routes');
-mountIf('table-types.routes');
-mountIf('sessions.routes');
-mountIf('products.routes');
-mountIf('categories.routes');
-mountIf('bills.routes');
-mountIf('promotions.routes');
-mountIf('reports.routes');
-mountIf('settings.routes');
+/* -------------------------------------------------------------------------- */
+/*                          Healthcheck / Version                             */
+/* -------------------------------------------------------------------------- */
+
+// GET /api/v1/health
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// GET /api/v1/version
+router.get('/version', (req, res) => {
+  res.json({
+    name: pkg.name,
+    version: pkg.version,
+    node: process.version,
+    env: process.env.NODE_ENV || 'development',
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*                                Sub-routes                                  */
+/* -------------------------------------------------------------------------- */
+/**
+ * Mỗi file *.routes.js export ra 1 express.Router()
+ * Bên trong đã khai báo path đầy đủ: /auth/login, /users, /tables...
+ */
+
+const authRoutes = require('./auth.routes');
+const userRoutes = require('./users.routes');
+const tableRoutes = require('./tables.routes');
+const sessionRoutes = require('./sessions.routes');
+const productRoutes = require('./products.routes');
+const categoryRoutes = require('./categories.routes');
+const billRoutes = require('./bills.routes');
+const promotionRoutes = require('./promotions.routes');
+const reportRoutes = require('./reports.routes');
+const settingRoutes = require('./settings.routes');
+const areaRoutes = require('./areas.routes');
+
+// Mount lần lượt
+router.use(authRoutes);
+router.use(userRoutes);
+router.use(tableRoutes);
+router.use(sessionRoutes);
+router.use(productRoutes);
+router.use(categoryRoutes);
+router.use(billRoutes);
+router.use(promotionRoutes);
+router.use(reportRoutes);
+router.use(settingRoutes);
+
+// Areas: trong areas.routes.js path là '/', '/:id'
+// nên mount với prefix '/areas'
+router.use('/areas', areaRoutes);
 
 module.exports = router;

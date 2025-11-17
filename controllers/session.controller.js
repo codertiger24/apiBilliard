@@ -1,15 +1,12 @@
 // controllers/session.controller.js
-const mongoose = require('mongoose');
 const R = require('../utils/response');
-
 const Session = require('../models/session.model');
 const Table = require('../models/table.model');
-const TableType = require('../models/table-type.model');
 const Product = require('../models/product.model');
 const Bill = require('../models/bill.model');
 
 function safeRequire(p) { try { return require(p); } catch { return null; } }
-const Billing = safeRequire('../services/billing.service'); // có thể chưa đầy đủ hàm
+const Billing = safeRequire('../services/billing.service'); // optional service
 const { getActiveSetting } = Billing || {};
 const { applyGraceAndRound, diffMinutes } = require('../utils/time');
 const { ensureUniqueCode, makeBillCode } = require('../utils/codegen');
@@ -17,12 +14,14 @@ const { ensureUniqueCode, makeBillCode } = require('../utils/codegen');
 /* ===================== Helpers ===================== */
 
 function getSessionId(req) {
-  // Chuẩn hoá để tương thích route dùng :id hoặc :sessionId
-  return req?.params?.id
-      || req?.params?.sessionId
-      || req?.body?.sessionId
-      || req?.query?.sessionId
-      || null;
+  // Tương thích :id | :sessionId | body/query
+  return (
+    req?.params?.id ||
+    req?.params?.sessionId ||
+    req?.body?.sessionId ||
+    req?.query?.sessionId ||
+    null
+  );
 }
 
 function sanitize(doc) {
@@ -37,7 +36,7 @@ function parseSort(sortStr = '-startTime') {
   return { [field]: desc ? -1 : 1 };
 }
 
-function buildQuery({ q, status, table, staffStart, staffEnd, branchId, from, to }) {
+function buildQuery({ q, status, table, staffStart, staffEnd, areaId, from, to }) {
   const query = {};
   if (q) {
     const rx = new RegExp(String(q).trim().replace(/\s+/g, '.*'), 'i');
@@ -47,7 +46,7 @@ function buildQuery({ q, status, table, staffStart, staffEnd, branchId, from, to
   if (table) query.table = table;
   if (staffStart) query.staffStart = staffStart;
   if (staffEnd) query.staffEnd = staffEnd;
-  if (branchId) query.branchId = branchId;
+  if (areaId) query.areaId = areaId;
   if (from || to) {
     query.startTime = {};
     if (from) query.startTime.$gte = new Date(from);
@@ -57,49 +56,50 @@ function buildQuery({ q, status, table, staffStart, staffEnd, branchId, from, to
 }
 
 /** Fallback tính tạm nếu không có billing.service */
-async function fallbackPreview(session, {
-  endAt = new Date(),
-  setting = null,
-  discountLines = [],
-  surcharge = 0,
-} = {}) {
+async function fallbackPreview(
+  session,
+  { endAt = new Date(), setting = null, discountLines = [], surcharge = 0 } = {}
+) {
   const start = session.startTime;
   const end = endAt ? new Date(endAt) : new Date();
 
   const minsRaw = diffMinutes(start, end);
-  const rate = Number(session.tableTypeSnapshot?.ratePerHour || 0);
+  const rate = Number(session.pricingSnapshot?.ratePerHour || 0);
   const roundCfg = {
     roundingStep: setting?.billing?.roundingStep ?? 5,
     roundingMode: setting?.billing?.roundingMode ?? 'ceil',
     graceMinutes: setting?.billing?.graceMinutes ?? 0,
   };
   const mins = applyGraceAndRound(minsRaw, roundCfg);
-  const playAmount = Math.round((mins * rate / 60) * 100) / 100;
+  const playAmount = Math.round(((mins * rate) / 60) * 100) / 100;
 
   let serviceAmount = 0;
   if (Array.isArray(session.items)) {
     for (const it of session.items) {
       const qty = Number(it.qty || 0);
-      const price = Number(it.price || 0);
+      const price = Number(it.priceSnapshot || 0);
       serviceAmount += qty * price;
     }
   }
 
   let discountTotal = 0;
-  for (const d of (discountLines || [])) {
+  for (const d of discountLines || []) {
     if (!d) continue;
-    const type = d.type;
     const val = Number(d.value || 0);
-    if (type === 'percent') {
+    if (d.type === 'percent') {
       const base = playAmount + serviceAmount;
-      discountTotal += Math.min(base * (val / 100), Number(d.maxAmount || base));
-    } else if (type === 'value') {
+      const capped = d.maxAmount != null ? Number(d.maxAmount) : base;
+      discountTotal += Math.min(base * (val / 100), capped);
+    } else if (d.type === 'value') {
       discountTotal += val;
     }
   }
 
   const subtotal = playAmount + serviceAmount;
-  const total = Math.max(0, Math.round((subtotal - discountTotal + Number(surcharge || 0)) * 100) / 100);
+  const total = Math.max(
+    0,
+    Math.round((subtotal - discountTotal + Number(surcharge || 0)) * 100) / 100
+  );
 
   return {
     startTime: session.startTime,
@@ -151,7 +151,7 @@ exports.getOne = R.asyncHandler(async (req, res) => {
   return R.ok(res, sanitize(sess));
 });
 
-// POST /sessions  (check-in)  ← ĐÃ SỬA
+// POST /sessions  (check-in)
 exports.open = R.asyncHandler(async (req, res) => {
   const { tableId, startAt, note } = req.body;
 
@@ -161,75 +161,52 @@ exports.open = R.asyncHandler(async (req, res) => {
       tableId,
       staffId: req.user?._id || null,
       startAt: startAt ? new Date(startAt) : new Date(),
+      note,
     });
     return R.created(res, sanitize(sess), 'Session opened');
   }
 
-  // 2) Fallback: tự tạo session thủ công (khi không load được services/billing.service.js)
-  const table = await Table.findById(tableId).populate('type');
+  // 2) Fallback: tự tạo session thủ công
+  const table = await Table.findById(tableId).lean();
   if (!table || !table.active) return R.fail(res, 400, 'Table not available');
 
   // Không cho mở nếu đã có session open
   const exists = await Session.exists({ table: table._id, status: 'open' });
   if (exists) return R.fail(res, 409, 'Bàn đang có phiên mở');
 
-  // Lấy setting để snapshot rule
+  // Lấy setting để snapshot rule (global)
   let setting = null;
   if (typeof getActiveSetting === 'function') {
-    setting = await getActiveSetting(table.branchId || null);
+    setting = await getActiveSetting();
   }
-
-  // Lấy loại bàn để snapshot giá
-  const tableType = table.type || await TableType.findById(table.type);
-  if (!tableType) return R.fail(res, 400, 'Table type not found');
 
   const at = startAt ? new Date(startAt) : new Date();
 
-  // Nếu Billing có hàm resolveRatePerHour thì dùng, không thì tính tay
-  let ratePerHour;
-  let rateSource;
-  if (Billing && typeof Billing.resolveRatePerHour === 'function') {
-    const { ratePerHour: r, source } = Billing.resolveRatePerHour(table, tableType, at);
-    ratePerHour = r;
-    rateSource = source;
-  } else {
-    ratePerHour =
-      typeof table.ratePerHour === 'number' && table.ratePerHour >= 0
-        ? table.ratePerHour
-        : Number(tableType.baseRatePerHour || 0);
-    rateSource =
-      typeof table.ratePerHour === 'number' && table.ratePerHour >= 0 ? 'table' : 'type';
-  }
-
-  const tableTypeSnapshot = {
-    typeId: tableType._id,
-    code: String(tableType.code || '').toUpperCase(),
-    name: tableType.name,
-    ratePerHour,
-    rateSource,
+  // Snapshot giá từ chính Table (đã bỏ TableType)
+  const pricingSnapshot = {
+    ratePerHour: Number(table.ratePerHour || 0),
+    rateSource: 'table',
   };
 
   const billingRuleSnapshot = {
     roundingStep: Number(setting?.billing?.roundingStep ?? 5),
     graceMinutes: Number(setting?.billing?.graceMinutes ?? 0),
-    roundingMode: setting?.billing?.roundingMode || 'ceil',
   };
 
   const sess = await Session.create({
     table: table._id,
-    tableTypeSnapshot,
+    areaId: table.areaId || null,
     billingRuleSnapshot,
+    pricingSnapshot,
     startTime: at,
     status: 'open',
     items: [],
     staffStart: req.user?._id || null,
     note: note || '',
-    branchId: table.branchId || null,
   });
 
   // cập nhật trạng thái bàn
-  table.status = 'playing';
-  await table.save();
+  await Table.findByIdAndUpdate(table._id, { $set: { status: 'playing' } });
 
   return R.created(res, sanitize(sess), 'Session opened');
 });
@@ -248,7 +225,7 @@ exports.addItem = R.asyncHandler(async (req, res) => {
   const prod = await Product.findById(productId).select('name price unit active');
   if (!prod || prod.active === false) return R.fail(res, 400, 'Product not available');
 
-  const exist = sess.items.find(i => String(i.product) === String(prod._id));
+  const exist = sess.items.find((i) => String(i.product) === String(prod._id));
   if (exist) {
     exist.qty = Number(exist.qty || 0) + Number(qty || 0);
     if (typeof note !== 'undefined') exist.note = note;
@@ -272,7 +249,7 @@ exports.updateItemQty = R.asyncHandler(async (req, res) => {
   const id = getSessionId(req);
   if (!id) return R.fail(res, 400, 'Missing session id');
   const { itemId } = req.params;
-  const { qty } = req.body;
+  const { qty, note } = req.body;
 
   const sess = await Session.findById(id);
   if (!sess) return R.fail(res, 404, 'Session not found');
@@ -285,6 +262,7 @@ exports.updateItemQty = R.asyncHandler(async (req, res) => {
     item.deleteOne();
   } else {
     item.qty = Number(qty);
+    if (typeof note !== 'undefined') item.note = note;
   }
 
   await sess.save();
@@ -324,7 +302,7 @@ exports.previewClose = R.asyncHandler(async (req, res) => {
 
   let setting = null;
   if (typeof getActiveSetting === 'function') {
-    setting = await getActiveSetting(sess.branchId || null);
+    setting = await getActiveSetting();
   }
 
   // Nếu service có hàm previewClose thì ưu tiên dùng
@@ -355,12 +333,11 @@ exports.checkout = R.asyncHandler(async (req, res) => {
   if (!sess) return R.fail(res, 404, 'Session not found');
   if (sess.status !== 'open') return R.fail(res, 409, 'Session already closed/void');
 
-  if (Array.isArray(discountLines)) sess.discountLines = discountLines;
   if (typeof note !== 'undefined') sess.note = note;
 
   let setting = null;
   if (typeof getActiveSetting === 'function') {
-    setting = await getActiveSetting(sess.branchId || null);
+    setting = await getActiveSetting();
   }
 
   // Ưu tiên dùng service (có transaction)
@@ -376,21 +353,27 @@ exports.checkout = R.asyncHandler(async (req, res) => {
       note,
     });
 
-    return R.ok(res, {
-      session: sanitize(updated),
-      bill: sanitize(bill),
-    }, 'Session closed & bill created');
+    return R.ok(
+      res,
+      {
+        session: sanitize(updated),
+        bill: sanitize(bill),
+      },
+      'Session closed & bill created'
+    );
   }
 
   // Fallback (không transaction)
   const preview = await fallbackPreview(sess, { endAt, setting, discountLines, surcharge });
   const code = await ensureUniqueCode(Bill, { field: 'code', gen: makeBillCode });
 
+  const table = await Table.findById(sess.table).lean();
+
   const billDoc = await Bill.create({
     code,
     session: sess._id,
     table: sess.table,
-    tableName: (await Table.findById(sess.table).lean())?.name || '',
+    tableName: table?.name || '',
     staff: req.user?._id || sess.staffStart || null,
     items: [
       {
@@ -399,7 +382,7 @@ exports.checkout = R.asyncHandler(async (req, res) => {
         ratePerHour: preview.ratePerHour,
         amount: preview.playAmount,
       },
-      ...(sess.items || []).map(it => ({
+      ...(sess.items || []).map((it) => ({
         type: 'product',
         productId: it.product || null,
         nameSnapshot: it.nameSnapshot,
@@ -409,35 +392,38 @@ exports.checkout = R.asyncHandler(async (req, res) => {
         note: it.note || '',
       })),
     ],
-    discountLines,
+    discounts: discountLines,
     surcharge,
     playAmount: preview.playAmount,
     serviceAmount: preview.serviceAmount,
-    subtotal: preview.subtotal,
+    subTotal: preview.subtotal,
     total: preview.total,
     paid: !!paid,
     paidAt: paid ? new Date() : null,
     paymentMethod,
     note: note || sess.note || '',
-    branchId: sess.branchId || null,
   });
 
+  // Cập nhật session
   sess.status = 'closed';
   sess.endTime = preview.endTime;
   sess.durationMinutes = preview.minutes;
   sess.staffEnd = req.user?._id || null;
   await sess.save();
 
-  const table = await Table.findById(sess.table);
-  if (table) {
-    table.status = 'available';
-    await table.save();
+  // Trả bàn về available
+  if (table?._id) {
+    await Table.findByIdAndUpdate(table._id, { $set: { status: 'available' } });
   }
 
-  return R.ok(res, {
-    session: sanitize(sess),
-    bill: sanitize(billDoc),
-  }, 'Session closed & bill created');
+  return R.ok(
+    res,
+    {
+      session: sanitize(sess),
+      bill: sanitize(billDoc),
+    },
+    'Session closed & bill created'
+  );
 });
 
 // PATCH /sessions/:id/void
@@ -456,11 +442,8 @@ exports.void = R.asyncHandler(async (req, res) => {
   sess.voidReason = reason || 'void';
   await sess.save();
 
-  const table = await Table.findById(sess.table);
-  if (table) {
-    table.status = 'available';
-    await table.save();
-  }
+  // Trả bàn về available
+  await Table.findByIdAndUpdate(sess.table, { $set: { status: 'available' } });
 
   return R.ok(res, sanitize(sess), 'Session voided');
 });

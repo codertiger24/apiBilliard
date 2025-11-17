@@ -49,16 +49,19 @@ const BillSchema = new Schema(
     code: { type: String, trim: true, uppercase: true, unique: true, index: true }, // vd: B240101-AB12CD
 
     session: { type: Schema.Types.ObjectId, ref: 'Session', required: true, index: true },
-    table: { type: Schema.Types.ObjectId, ref: 'Table', required: true, index: true },
+    table:   { type: Schema.Types.ObjectId, ref: 'Table',   required: true, index: true },
 
     // Snapshot tên bàn để in nhanh (tránh join khi render)
     tableName: { type: String, trim: true, default: '' },
+
+    // Snapshot khu vực (để lọc/báo cáo ổn định theo khu vực)
+    areaId: { type: Schema.Types.ObjectId, ref: 'Area', default: null, index: true },
 
     // Danh sách items (đã chốt)
     items: { type: [BillItemSchema], default: [] },
 
     // Tổng theo nhóm (được tính & đóng băng khi tạo bill)
-    playAmount: { type: Number, min: 0, default: 0 },
+    playAmount:    { type: Number, min: 0, default: 0 },
     serviceAmount: { type: Number, min: 0, default: 0 },
 
     // Tổng trước giảm
@@ -74,8 +77,8 @@ const BillSchema = new Schema(
     total: { type: Number, min: 0, default: 0 },
 
     // Thanh toán
-    paid: { type: Boolean, default: false, index: true },
-    paidAt: { type: Date, default: null, index: true },
+    paid:          { type: Boolean, default: false, index: true },
+    paidAt:        { type: Date, default: null, index: true },
     paymentMethod: { type: String, enum: PAYMENT_METHODS, default: 'cash', index: true },
 
     // Nhân viên lập/thu ngân
@@ -83,9 +86,6 @@ const BillSchema = new Schema(
 
     // Ghi chú
     note: { type: String, trim: true, default: '' },
-
-    // Chi nhánh (để mở rộng)
-    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
   },
   {
     timestamps: true,
@@ -104,10 +104,10 @@ const BillSchema = new Schema(
 
 // ===== Indexes phụ trợ =====
 BillSchema.index({ createdAt: -1 });
-BillSchema.index({ branchId: 1, createdAt: -1 });
 BillSchema.index({ table: 1, createdAt: -1 });
 BillSchema.index({ staff: 1, createdAt: -1 });
 BillSchema.index({ paid: 1, createdAt: -1 });
+BillSchema.index({ areaId: 1, createdAt: -1 });
 
 // ===== Helpers =====
 
@@ -124,7 +124,7 @@ BillSchema.methods.computeGroups = function () {
   return { playAmount: play, serviceAmount: svc, subTotal };
 };
 
-/** Tính lại tổng giảm giá (sum of discounts.amount) và total (KHÔNG lưu). 
+/** Tính lại tổng giảm giá (sum of discounts.amount) và total (KHÔNG lưu).
  *  Nếu discount.amount chưa có, sẽ tự tính theo rule (percent/value) dựa trên subTotal.
  */
 BillSchema.methods.computeTotals = function () {
@@ -170,18 +170,16 @@ function generateBillCode() {
 BillSchema.pre('validate', function (next) {
   if (!this.code) this.code = generateBillCode();
 
-  // Nếu chưa có playAmount/serviceAmount/subTotal/total → tính lại
   const hasGroups =
     this.playAmount > 0 || this.serviceAmount > 0 || this.subTotal > 0 || this.total > 0;
 
   if (!hasGroups) {
     const t = this.computeTotals();
-    this.playAmount = t.playAmount;
+    this.playAmount    = t.playAmount;
     this.serviceAmount = t.serviceAmount;
-    this.subTotal = t.subTotal;
-    // phân rã discounts.amount đã tính ở computeTotals()
-    this.surcharge = t.surcharge;
-    this.total = t.total;
+    this.subTotal      = t.subTotal;
+    this.surcharge     = t.surcharge;
+    this.total         = t.total;
   } else {
     // Đảm bảo total luôn nhất quán nếu caller không tự set
     if (!this.total || this.total <= 0) {

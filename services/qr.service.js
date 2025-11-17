@@ -5,32 +5,32 @@ const crypto = require('crypto');
 const QRCode = require('qrcode');
 
 const PUBLIC_QR_DIR = path.join(process.cwd(), 'public', 'qr');
-
 ensureDir(PUBLIC_QR_DIR);
 
+/* ----------------------------- helpers ----------------------------- */
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
-
 function hashText(text) {
   return crypto.createHash('sha1').update(String(text || '')).digest('hex').slice(0, 16);
 }
-
 function normalizeOptions(opt = {}) {
   const {
     width = 256,
     margin = 1,
     errorCorrectionLevel = 'M', // L, M, Q, H
     color = { dark: '#000000', light: '#FFFFFF' },
+    type, // allow override (e.g. 'svg')
   } = opt;
 
-  return {
-    type: 'png',
+  const out = {
     width: Number(width) || 256,
-    margin: Number(margin) ?? 1,
+    margin: Number.isFinite(Number(margin)) ? Number(margin) : 1,
     errorCorrectionLevel,
     color,
   };
+  if (type) out.type = type;
+  return out;
 }
 
 /** Xây URL /bills/:id/print từ Setting.eReceipt.baseUrl (nếu có) hoặc từ req.host */
@@ -45,34 +45,32 @@ function buildBillPrintUrl({ req, setting, billId }) {
   return `${origin}/api/v1/bills/${id}/print`;
 }
 
+/* ----------------------------- core gen ---------------------------- */
 /** Tạo PNG Buffer từ chuỗi text */
 async function toPngBuffer(text, opt = {}) {
   const o = normalizeOptions(opt);
-  return QRCode.toBuffer(String(text || ''), o);
+  return QRCode.toBuffer(String(text || ''), { type: 'png', ...o });
 }
-
 /** Tạo DataURL (PNG) từ text */
 async function toDataURL(text, opt = {}) {
   const o = normalizeOptions(opt);
-  return QRCode.toDataURL(String(text || ''), o);
+  return QRCode.toDataURL(String(text || ''), { type: 'png', ...o });
 }
-
-/** Tạo SVG string từ text (nếu cần vector) */
+/** Tạo SVG string từ text (vector) */
 async function toSvgString(text, opt = {}) {
-  const o = normalizeOptions(opt);
-  o.type = 'svg';
+  const o = normalizeOptions({ ...opt, type: 'svg' });
   return QRCode.toString(String(text || ''), o);
 }
 
-/** Lưu ảnh PNG vào thư mục bất kỳ */
+/* -------------------------- save utilities ------------------------- */
+/** Lưu ảnh PNG vào đường dẫn chỉ định */
 async function savePng(text, filePath, opt = {}) {
   const buf = await toPngBuffer(text, opt);
   ensureDir(path.dirname(filePath));
   await fs.promises.writeFile(filePath, buf);
   return { filePath, size: buf.length };
 }
-
-/** Lưu PNG vào public/qr để FE truy cập trực tiếp; trả về publicPath và filePath */
+/** Lưu PNG vào public/qr để FE truy cập; trả về publicPath và filePath */
 async function savePngToPublic(text, { filename, subdir = '' } = {}, opt = {}) {
   const o = normalizeOptions(opt);
   const name = filename || `${hashText(text)}_${o.width}.png`;
@@ -80,7 +78,7 @@ async function savePngToPublic(text, { filename, subdir = '' } = {}, opt = {}) {
   ensureDir(dir);
 
   const filePath = path.join(dir, name);
-  const buf = await QRCode.toBuffer(String(text || ''), o);
+  const buf = await QRCode.toBuffer(String(text || ''), { type: 'png', ...o });
   await fs.promises.writeFile(filePath, buf);
 
   const relDir = subdir ? `/qr/${subdir.replace(/^[\\/]+|[\\/]+$/g, '')}` : '/qr';
@@ -88,26 +86,36 @@ async function savePngToPublic(text, { filename, subdir = '' } = {}, opt = {}) {
   return { filePath, publicPath, size: buf.length };
 }
 
-/** Helper gửi PNG trực tiếp qua Express response */
+/* --------------------------- express helper ------------------------ */
 async function respondPng(res, text, opt = {}) {
   const buf = await toPngBuffer(text, opt);
   res.set('Content-Type', 'image/png');
   res.send(buf);
 }
 
-/** Tạo QR PNG buffer cho 1 bill (dựa vào setting/baseUrl hoặc req.host) */
+/* ---------------------- bill-specific convenience ------------------ */
 async function billPngBuffer({ req, setting, billId, width = 256, margin = 1, errorCorrectionLevel = 'M' }) {
   const url = buildBillPrintUrl({ req, setting, billId });
   return toPngBuffer(url, { width, margin, errorCorrectionLevel });
 }
-
-/** Lưu QR bill vào public/qr; trả publicPath để nhúng cho FE */
-async function billPngPublic({ req, setting, billId, subdir = 'bills', width = 256 }) {
+async function billPngPublic({ req, setting, billId, subdir = 'bills', width = 256, margin = 1, errorCorrectionLevel = 'M' }) {
   const url = buildBillPrintUrl({ req, setting, billId });
   const filename = `bill_${billId}_${width}.png`;
-  return savePngToPublic(url, { filename, subdir }, { width });
+  return savePngToPublic(url, { filename, subdir }, { width, margin, errorCorrectionLevel });
 }
 
+/* ------------------ compatibility with bill.controller ------------- */
+/** Compatible alias: returns { buffer } */
+async function generateQRCodePNG(text, opt = {}) {
+  const buffer = await toPngBuffer(text, opt);
+  return { buffer };
+}
+/** Compatible alias: returns Buffer directly */
+async function qrPngBuffer(text, opt = {}) {
+  return toPngBuffer(text, opt);
+}
+
+/* -------------------------------- export --------------------------- */
 module.exports = {
   // URL builders
   buildBillPrintUrl,
@@ -127,6 +135,10 @@ module.exports = {
   // Bill-specific helpers
   billPngBuffer,
   billPngPublic,
+
+  // Compatibility (used by controllers/bill.controller.js)
+  generateQRCodePNG,
+  qrPngBuffer,
 
   // Constants
   PUBLIC_QR_DIR,

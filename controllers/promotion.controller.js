@@ -17,22 +17,33 @@ function parseSort(sortStr = 'applyOrder') {
   return { [field]: desc ? -1 : 1 };
 }
 
+function normalizeCode(code) {
+  return String(code || '').trim().toUpperCase();
+}
+
+function truthyBool(v) {
+  return String(v) === 'true' || v === true;
+}
+
 function buildQuery({ q, code, scope, active, branchId }) {
   const query = {};
   if (q) {
     const rx = new RegExp(String(q).trim().replace(/\s+/g, '.*'), 'i');
     query.$or = [{ name: rx }, { code: rx }, { description: rx }];
   }
-  if (code) query.code = String(code).trim().toUpperCase();
+  if (code) query.code = normalizeCode(code);
   if (scope) query.scope = scope;
   if (typeof active === 'boolean' || active === 'true' || active === 'false') {
-    query.active = String(active) === 'true' || active === true;
+    query.active = truthyBool(active);
   }
   if (branchId) query.branchId = branchId;
   return query;
 }
 
-/** Kiểm tra km có hiệu lực tại thời điểm at (Date) — chỉ xét rule thời gian nếu scope='time' */
+/** Kiểm tra khuyến mãi có hiệu lực tại thời điểm at (Date).
+ *  - Nếu scope !== 'time' chỉ cần active = true là đủ (điều kiện khác xử lý ở service áp dụng).
+ *  - Với scope='time' xét: khoảng ngày (validFrom/validTo, inclusive), thứ trong tuần, và khung giờ (hỗ trợ qua đêm).
+ */
 function isEffectiveAt(promo, at = new Date()) {
   if (!promo?.active) return false;
   if (promo.scope !== 'time') return true;
@@ -41,30 +52,41 @@ function isEffectiveAt(promo, at = new Date()) {
   const now = new Date(at);
 
   if (rule.validFrom && now < new Date(rule.validFrom)) return false;
-  if (rule.validTo && now > new Date(rule.validTo)) return false;
+  if (rule.validTo) {
+    const end = new Date(rule.validTo);
+    end.setHours(23, 59, 59, 999); // inclusive đến hết ngày validTo
+    if (now > end) return false;
+  }
 
   const dow = dayOfWeek(now); // 0..6
   if (Array.isArray(rule.daysOfWeek) && rule.daysOfWeek.length && !rule.daysOfWeek.includes(dow)) {
     return false;
   }
 
-  // Nếu có timeRanges, cần match ít nhất 1 range (hỗ trợ qua đêm)
   if (Array.isArray(rule.timeRanges) && rule.timeRanges.length) {
-    const cur = toHHMM(now);
-    const ok = rule.timeRanges.some(tr => inTimeRange(cur, tr.from, tr.to));
+    const cur = toHHMM(now); // 'HH:mm'
+    const ok = rule.timeRanges.some((tr) => inTimeRange(cur, tr.from, tr.to));
     return ok;
   }
 
   return true;
 }
 
-/** Check discount value (percent <= 100) */
+/** Check discount input (ví dụ percent không vượt 100) */
 function checkDiscount(discount) {
   if (!discount) return null;
-  if (discount.type === 'percent' && Number(discount.value) > 100) {
-    return 'Phần trăm giảm giá không được vượt quá 100';
+  if (discount.type === 'percent') {
+    const v = Number(discount.value || 0);
+    if (v < 0 || v > 100) return 'Phần trăm giảm giá phải trong khoảng 0..100';
+  }
+  if (discount.value != null && Number(discount.value) < 0) {
+    return 'Giá trị giảm không hợp lệ';
   }
   return null;
+}
+
+function isDupKey(err) {
+  return err && (err.code === 11000 || /E11000/i.test(err.message || ''));
 }
 
 /* ===================== Controllers ===================== */
@@ -89,12 +111,12 @@ exports.list = R.asyncHandler(async (req, res) => {
   const query = buildQuery({ q, code, scope, active, branchId });
   const sortObj = parseSort(String(sort));
 
-  // Lấy tất cả theo query rồi mới filter "at" trong bộ nhớ (khuyến mãi thường ít)
+  // Lấy theo query cơ bản, sau đó lọc theo "at" trong bộ nhớ
   let all = await Promotion.find(query).sort(sortObj).lean();
 
   if (at) {
     const atDate = new Date(at);
-    all = all.filter(p => isEffectiveAt(p, atDate));
+    all = all.filter((p) => isEffectiveAt(p, atDate));
   }
 
   const total = all.length;
@@ -122,7 +144,7 @@ exports.getOne = R.asyncHandler(async (req, res) => {
 exports.create = R.asyncHandler(async (req, res) => {
   const payload = {
     name: req.body.name,
-    code: String(req.body.code || '').trim().toUpperCase(),
+    code: normalizeCode(req.body.code),
     scope: req.body.scope,
 
     active: req.body.active ?? true,
@@ -138,11 +160,18 @@ exports.create = R.asyncHandler(async (req, res) => {
     branchId: req.body.branchId || null,
   };
 
-  const err = checkDiscount(payload.discount);
-  if (err) return R.fail(res, 422, err);
+  const errMsg = checkDiscount(payload.discount);
+  if (errMsg) return R.fail(res, 422, errMsg);
 
-  const doc = await Promotion.create(payload);
-  return R.created(res, sanitize(doc), 'Promotion created');
+  try {
+    const doc = await Promotion.create(payload);
+    return R.created(res, sanitize(doc), 'Promotion created');
+  } catch (err) {
+    if (isDupKey(err)) {
+      return R.fail(res, 409, 'Mã khuyến mãi đã tồn tại trong chi nhánh này');
+    }
+    throw err;
+  }
 });
 
 // PUT /promotions/:id
@@ -166,7 +195,7 @@ exports.update = R.asyncHandler(async (req, res) => {
   } = req.body;
 
   if (typeof name !== 'undefined') doc.name = name;
-  if (typeof code !== 'undefined') doc.code = String(code || '').trim().toUpperCase();
+  if (typeof code !== 'undefined') doc.code = normalizeCode(code);
   if (typeof scope !== 'undefined') doc.scope = scope;
 
   if (typeof active !== 'undefined') doc.active = !!active;
@@ -178,15 +207,22 @@ exports.update = R.asyncHandler(async (req, res) => {
   if (typeof billRule !== 'undefined') doc.billRule = billRule;
 
   if (typeof discount !== 'undefined') {
-    const err = checkDiscount(discount);
-    if (err) return R.fail(res, 422, err);
+    const errMsg = checkDiscount(discount);
+    if (errMsg) return R.fail(res, 422, errMsg);
     doc.discount = discount;
   }
 
   if (typeof description !== 'undefined') doc.description = description;
   if (typeof branchId !== 'undefined') doc.branchId = branchId;
 
-  await doc.save();
+  try {
+    await doc.save();
+  } catch (err) {
+    if (isDupKey(err)) {
+      return R.fail(res, 409, 'Mã khuyến mãi đã tồn tại trong chi nhánh này');
+    }
+    throw err;
+  }
   return R.ok(res, sanitize(doc), 'Promotion updated');
 });
 
@@ -205,7 +241,8 @@ exports.setApplyOrder = R.asyncHandler(async (req, res) => {
   const doc = await Promotion.findById(req.params.id);
   if (!doc) return R.fail(res, 404, 'Promotion not found');
 
-  doc.applyOrder = Number(req.body.applyOrder || 0);
+  const val = Number(req.body.applyOrder);
+  doc.applyOrder = Number.isFinite(val) && val >= 0 ? val : 0;
   await doc.save();
   return R.ok(res, sanitize(doc), 'Apply order updated');
 });

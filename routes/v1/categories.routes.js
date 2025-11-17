@@ -8,25 +8,50 @@ const { validate } = require('../../middlewares/validate.middleware');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const { requireAdmin } = require('../../middlewares/role.middleware');
 
-// Chỉ admin quản trị danh mục
+/* ----------------------------- Admin-only: Category management ----------------------------- */
+// Tất cả route phía dưới đều yêu cầu admin đã đăng nhập
 router.use(requireAuth, requireAdmin);
 
-// List
-router.get('/categories', validate(schema.list), ctrl.list);
+// GET /api/v1/categories
+router.get(
+  '/categories',
+  validate(schema.list),
+  ctrl.list
+);
 
-// Get one
-router.get('/categories/:id', validate(schema.getOne), ctrl.getOne);
+// GET /api/v1/categories/:id
+router.get(
+  '/categories/:id',
+  validate(schema.getOne),
+  ctrl.getOne
+);
 
-// Create
-router.post('/categories', validate(schema.create), ctrl.create);
+// POST /api/v1/categories
+router.post(
+  '/categories',
+  validate(schema.create),
+  ctrl.create
+);
 
-// Update
-router.put('/categories/:id', validate(schema.update), ctrl.update);
+// PUT /api/v1/categories/:id
+router.put(
+  '/categories/:id',
+  validate(schema.update),
+  ctrl.update
+);
 
-// Toggle active
-router.patch('/categories/:id/active', validate(schema.setActive), ctrl.setActive);
+// PATCH /api/v1/categories/:id/active
+router.patch(
+  '/categories/:id/active',
+  validate(schema.setActive),
+  ctrl.setActive
+);
 
-// Delete
-router.delete('/categories/:id', validate(schema.remove), ctrl.remove);
+// DELETE /api/v1/categories/:id
+router.delete(
+  '/categories/:id',
+  validate(schema.remove),
+  ctrl.remove
+);
 
 module.exports = router;

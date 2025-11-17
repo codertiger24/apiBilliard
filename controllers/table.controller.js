@@ -1,7 +1,6 @@
 // controllers/table.controller.js
 const R = require('../utils/response');
 const Table = require('../models/table.model');
-const TableType = require('../models/table-type.model');
 const Session = require('../models/session.model');
 const Bill = require('../models/bill.model');
 
@@ -13,18 +12,17 @@ function parseSort(sortStr = 'orderIndex') {
   return { [field]: desc ? -1 : 1 };
 }
 
-function buildQuery({ q, status, type, active, branchId }) {
+function buildQuery({ q, status, areaId, active }) {
   const query = {};
   if (q) {
     const rx = new RegExp(String(q).trim().replace(/\s+/g, '.*'), 'i');
     query.$or = [{ name: rx }];
   }
   if (status) query.status = status;
-  if (type) query.type = type;
+  if (areaId) query.areaId = areaId;
   if (typeof active === 'boolean' || active === 'true' || active === 'false') {
     query.active = String(active) === 'true' || active === true;
   }
-  if (branchId) query.branchId = branchId;
   return query;
 }
 
@@ -36,7 +34,7 @@ function sanitize(doc) {
 /** Gắn thông tin phiên đang chơi (nếu có) vào danh sách bàn */
 async function attachOpenSessionInfo(tables) {
   if (!tables || !tables.length) return tables;
-  const ids = tables.map(t => t._id);
+  const ids = tables.map((t) => t._id);
   const sessions = await Session.find({
     table: { $in: ids },
     status: 'open',
@@ -45,8 +43,8 @@ async function attachOpenSessionInfo(tables) {
     .lean();
 
   const map = new Map();
-  sessions.forEach(s => map.set(String(s.table), s));
-  return tables.map(t => {
+  sessions.forEach((s) => map.set(String(s.table), s));
+  return tables.map((t) => {
     const s = map.get(String(t._id));
     if (!s) return t;
     return {
@@ -69,9 +67,8 @@ exports.list = R.asyncHandler(async (req, res) => {
     limit = 50,
     q,
     status,
-    type,
+    areaId,
     active,
-    branchId,
     sort = 'orderIndex',
   } = req.query;
 
@@ -79,18 +76,12 @@ exports.list = R.asyncHandler(async (req, res) => {
   const limitNum = Math.min(200, Math.max(1, Number(limit) || 50));
   const skip = (pageNum - 1) * limitNum;
 
-  const query = buildQuery({
-    q,
-    status,
-    type,
-    active,
-    branchId,
-  });
+  const query = buildQuery({ q, status, areaId, active });
   const sortObj = parseSort(String(sort));
 
   const [itemsRaw, total] = await Promise.all([
     Table.find(query)
-      .populate('type', 'name code baseRatePerHour')
+      .populate('areaId', 'name code') // có thể null
       .sort(sortObj)
       .skip(skip)
       .limit(limitNum)
@@ -113,9 +104,7 @@ exports.list = R.asyncHandler(async (req, res) => {
 // GET /tables/:id
 exports.getOne = R.asyncHandler(async (req, res) => {
   const id = req.params.id;
-  const table = await Table.findById(id)
-    .populate('type', 'name code baseRatePerHour dayRates')
-    .lean();
+  const table = await Table.findById(id).populate('areaId', 'name code').lean();
   if (!table) return R.fail(res, 404, 'Table not found');
 
   // phiên đang mở (nếu có)
@@ -137,31 +126,25 @@ exports.getOne = R.asyncHandler(async (req, res) => {
 exports.create = R.asyncHandler(async (req, res) => {
   const {
     name,
-    type,          // TableType id
-    ratePerHour = null,
+    areaId = null,     // có thể chưa gán khu vực
+    ratePerHour,       // bắt buộc vì không còn TableType
     orderIndex = 0,
     active = true,
-    branchId = null,
   } = req.body;
 
-  // kiểm tra loại bàn tồn tại
-  const tt = await TableType.findById(type).select('_id');
-  if (!tt) return R.fail(res, 400, 'Table type not found');
-
-  // nếu không truyền orderIndex → đặt theo số lượng hiện có
+  // nếu không truyền orderIndex → đặt theo số lượng hiện có (trong cùng khu vực nếu muốn)
   let oi = orderIndex;
   if (typeof oi === 'undefined' || oi === null) {
-    const count = await Table.countDocuments({ branchId: branchId || null });
+    const count = await Table.countDocuments({ areaId: areaId || null });
     oi = count;
   }
 
   const doc = await Table.create({
     name: String(name).trim(),
-    type,
-    ratePerHour: ratePerHour ?? null,
+    areaId: areaId || null,
+    ratePerHour: Number(ratePerHour),
     orderIndex: oi,
     active: !!active,
-    branchId: branchId || null,
   });
 
   return R.created(res, sanitize(doc), 'Table created');
@@ -169,28 +152,16 @@ exports.create = R.asyncHandler(async (req, res) => {
 
 // PUT /tables/:id
 exports.update = R.asyncHandler(async (req, res) => {
-  const {
-    name,
-    type,
-    ratePerHour,
-    orderIndex,
-    active,
-    branchId,
-  } = req.body;
+  const { name, areaId, ratePerHour, orderIndex, active } = req.body;
 
   const table = await Table.findById(req.params.id);
   if (!table) return R.fail(res, 404, 'Table not found');
 
-  if (typeof type !== 'undefined') {
-    const tt = await TableType.findById(type).select('_id');
-    if (!tt) return R.fail(res, 400, 'Table type not found');
-    table.type = type;
-  }
   if (typeof name !== 'undefined') table.name = name;
-  if (typeof ratePerHour !== 'undefined') table.ratePerHour = ratePerHour;
-  if (typeof orderIndex !== 'undefined') table.orderIndex = orderIndex;
+  if (typeof areaId !== 'undefined') table.areaId = areaId || null;
+  if (typeof ratePerHour !== 'undefined') table.ratePerHour = Number(ratePerHour);
+  if (typeof orderIndex !== 'undefined') table.orderIndex = Number(orderIndex) || 0;
   if (typeof active !== 'undefined') table.active = !!active;
-  if (typeof branchId !== 'undefined') table.branchId = branchId;
 
   await table.save();
   return R.ok(res, sanitize(table), 'Table updated');
@@ -231,13 +202,11 @@ exports.setActive = R.asyncHandler(async (req, res) => {
 
 // PATCH /tables/:id/rate
 exports.setRate = R.asyncHandler(async (req, res) => {
-  const { ratePerHour } = req.body; // number | null
+  const { ratePerHour } = req.body; // number
   const table = await Table.findById(req.params.id);
   if (!table) return R.fail(res, 404, 'Table not found');
 
-  table.ratePerHour = (ratePerHour === null || typeof ratePerHour === 'undefined')
-    ? null
-    : Number(ratePerHour);
+  table.ratePerHour = Number(ratePerHour);
   await table.save();
   return R.ok(res, sanitize(table), 'Rate updated');
 });
@@ -249,7 +218,7 @@ exports.reorder = R.asyncHandler(async (req, res) => {
     return R.fail(res, 400, 'items is required');
   }
 
-  const ops = items.map(it => ({
+  const ops = items.map((it) => ({
     updateOne: {
       filter: { _id: it.id },
       update: { $set: { orderIndex: Number(it.orderIndex) || 0 } },

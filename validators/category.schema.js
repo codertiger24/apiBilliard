@@ -29,7 +29,6 @@ module.exports.list = {
     limit: Joi.number().integer().min(1).max(200).default(50),
     q: Joi.string().trim().allow('', null),           // tìm theo name/code
     active: Joi.boolean().optional(),
-    branchId: objectId().allow(null, ''),
 
     // sort: 'orderIndex' | '-orderIndex' | 'name' | '-name' | 'code' | '-code' | 'createdAt' | '-createdAt'
     sort: Joi.string()
@@ -51,7 +50,6 @@ module.exports.create = {
     }).optional(),
     orderIndex: Joi.number().integer().min(0).default(0),
     active: Joi.boolean().default(true),
-    branchId: objectId().allow(null).optional(),
   }),
 };
 
@@ -68,7 +66,6 @@ module.exports.update = {
     }),
     orderIndex: Joi.number().integer().min(0),
     active: Joi.boolean(),
-    branchId: objectId().allow(null),
   }).min(1),
 };
 

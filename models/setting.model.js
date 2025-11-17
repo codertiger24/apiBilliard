@@ -5,8 +5,8 @@ const { Schema } = mongoose;
 const HHMM = /^\d{2}:\d{2}$/;
 const ROUNDING_STEPS = [1, 5, 10, 15];
 const ROUNDING_MODES = ['ceil', 'round', 'floor']; // cách làm tròn phút
-const PAPER_SIZES = ['58mm', '80mm', 'A4'];       // khổ in phổ biến POS
-const BACKUP_TARGETS = ['local', 's3', 'gdrive']; // tuỳ chọn mở rộng
+const PAPER_SIZES   = ['58mm', '80mm', 'A4'];      // khổ in phổ biến POS
+const BACKUP_TARGETS = ['local', 's3', 'gdrive'];  // tuỳ chọn mở rộng
 
 // ---- Sub-schemas ----
 const ShopSchema = new Schema(
@@ -67,12 +67,10 @@ const BackupSchema = new Schema(
 );
 
 // ---- Main schema ----
+// ĐÃ BỎ branch scope → chỉ còn 'global'
 const SettingSchema = new Schema(
   {
-    // scope: 'global' = áp dụng toàn hệ thống; 'branch' = áp dụng theo chi nhánh
-    scope: { type: String, enum: ['global', 'branch'], default: 'global', index: true },
-
-    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
+    scope: { type: String, enum: ['global'], default: 'global', index: true },
 
     shop: { type: ShopSchema, default: () => ({ name: 'Billiard POS' }) },
 
@@ -106,20 +104,14 @@ const SettingSchema = new Schema(
 );
 
 // ---- Indexes ----
-// Duy nhất 1 settings cho mỗi (scope, branchId)
-// (scope='global', branchId=null) cũng chỉ có 1 bản ghi
-SettingSchema.index({ scope: 1, branchId: 1 }, { unique: true });
+// Chỉ 1 bản ghi duy nhất cho scope='global'
+SettingSchema.index({ scope: 1 }, { unique: true });
 
 // ---- Hooks: chuẩn hoá & ràng buộc ----
 SettingSchema.pre('validate', function (next) {
-  // Bắt buộc branchId khi scope='branch'
-  if (this.scope === 'branch' && !this.branchId) {
-    return next(new Error('branchId is required when scope=branch'));
-  }
   // Chuẩn hoá roundingStep vào tập giá trị hợp lệ
-  const step = Number(this.billing?.roundingStep || 5);
+  const step = Number(this.billing?.roundingStep ?? 5);
   if (!ROUNDING_STEPS.includes(step)) {
-    // tìm step gần nhất
     const nearest = ROUNDING_STEPS.reduce((a, b) =>
       Math.abs(b - step) < Math.abs(a - step) ? b : a
     );
@@ -174,5 +166,5 @@ SettingSchema.methods.getReceiptInfo = function () {
 module.exports = mongoose.model('Setting', SettingSchema);
 module.exports.ROUNDING_STEPS = ROUNDING_STEPS;
 module.exports.ROUNDING_MODES = ROUNDING_MODES;
-module.exports.PAPER_SIZES = PAPER_SIZES;
+module.exports.PAPER_SIZES   = PAPER_SIZES;
 module.exports.BACKUP_TARGETS = BACKUP_TARGETS;

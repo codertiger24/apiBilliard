@@ -8,31 +8,66 @@ const { validate } = require('../../middlewares/validate.middleware');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const { requireAdmin } = require('../../middlewares/role.middleware');
 
-// Chỉ admin được quản trị người dùng
+/**
+ * User management (Admin only)
+ * Tất cả route phía dưới đều yêu cầu admin đã đăng nhập.
+ */
 router.use(requireAuth, requireAdmin);
 
-// List users
-router.get('/users', validate(schema.list), ctrl.list);
+// GET /api/v1/users
+router.get(
+  '/users',
+  validate(schema.list),
+  ctrl.list
+);
 
-// Get one
-router.get('/users/:id', validate(schema.getOne), ctrl.getOne);
+// GET /api/v1/users/:id
+router.get(
+  '/users/:id',
+  validate(schema.getOne),
+  ctrl.getOne
+);
 
-// Create
-router.post('/users', validate(schema.create), ctrl.create);
+// POST /api/v1/users
+router.post(
+  '/users',
+  validate(schema.create),
+  ctrl.create
+);
 
-// Update
-router.put('/users/:id', validate(schema.update), ctrl.update);
+// PUT /api/v1/users/:id
+router.put(
+  '/users/:id',
+  validate(schema.update),
+  ctrl.update
+);
 
-// Change role
-router.patch('/users/:id/role', validate(schema.changeRole), ctrl.changeRole);
+// PATCH /api/v1/users/:id/role
+router.patch(
+  '/users/:id/role',
+  validate(schema.changeRole),
+  ctrl.changeRole
+);
 
-// Set active
-router.patch('/users/:id/active', validate(schema.setActive), ctrl.setActive);
+// PATCH /api/v1/users/:id/active
+router.patch(
+  '/users/:id/active',
+  validate(schema.setActive),
+  ctrl.setActive
+);
 
-// Reset password
-router.patch('/users/:id/reset-password', validate(schema.resetPassword), ctrl.resetPassword);
+// PATCH /api/v1/users/:id/reset-password
+router.patch(
+  '/users/:id/reset-password',
+  validate(schema.resetPassword),
+  ctrl.resetPassword
+);
 
-// Delete
-router.delete('/users/:id', validate(schema.remove), ctrl.remove);
+// DELETE /api/v1/users/:id
+router.delete(
+  '/users/:id',
+  validate(schema.remove),
+  ctrl.remove
+);
 
 module.exports = router;

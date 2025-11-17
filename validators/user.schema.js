@@ -33,9 +33,8 @@ module.exports.list = {
     q: Joi.string().trim().allow('', null),               // search theo name/username
     role: Joi.string().valid(...ROLES).optional(),
     active: Joi.boolean().optional(),
-    branchId: objectId().allow(null, ''),
 
-    // sort: 'createdAt' | '-createdAt' | 'name' | '-name' | 'username' | ...
+    // sort: 'createdAt' | '-createdAt' | 'name' | '-name' | 'username' | 'role' | 'active'
     sort: Joi.string()
       .trim()
       .pattern(/^(-)?(createdAt|name|username|role|active)$/)
@@ -54,7 +53,6 @@ module.exports.create = {
     avatar: Joi.string().trim().uri().allow('', null).optional(),
     role: Joi.string().valid(...ROLES).default('staff'),
     active: Joi.boolean().default(true),
-    branchId: objectId().allow(null).optional(),
   }),
 };
 
@@ -70,7 +68,6 @@ module.exports.update = {
     avatar: Joi.string().trim().uri().allow('', null),
     role: Joi.string().valid(...ROLES),
     active: Joi.boolean(),
-    branchId: objectId().allow(null),
     // Không cho cập nhật username/password ở đây (tách endpoint riêng nếu cần)
   }).min(1),
 };
@@ -113,3 +110,6 @@ module.exports.getOne = {
     id: objectId().required(),
   }),
 };
+
+module.exports.objectId = objectId;
+module.exports.ROLES = ROLES;

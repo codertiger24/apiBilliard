@@ -24,7 +24,7 @@ const ProductCategorySchema = new Schema(
       maxlength: 500,
     },
     icon: {
-      type: String, // URL hoặc class icon (tùy bạn dùng UI nào)
+      type: String, // URL hoặc class icon (tùy UI)
       default: null,
     },
     color: {
@@ -33,14 +33,6 @@ const ProductCategorySchema = new Schema(
     },
     orderIndex: { type: Number, default: 0 },
     active: { type: Boolean, default: true, index: true },
-
-    // Dự phòng đa chi nhánh
-    branchId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Branch',
-      default: null,
-      index: true,
-    },
   },
   {
     timestamps: true,
@@ -57,16 +49,18 @@ const ProductCategorySchema = new Schema(
   }
 );
 
-// ===== Indexes / Uniques theo chi nhánh =====
+// ===== Indexes / Uniques (toàn hệ thống) =====
 ProductCategorySchema.index(
-  { branchId: 1, code: 1 },
+  { code: 1 },
   { unique: true, partialFilterExpression: { code: { $type: 'string' } } }
 );
 
 ProductCategorySchema.index(
-  { branchId: 1, name: 1 },
+  { name: 1 },
   { unique: true, partialFilterExpression: { name: { $type: 'string' } } }
 );
+
+ProductCategorySchema.index({ orderIndex: 1 });
 
 // Chuẩn hoá code trước khi lưu/cập nhật
 function normalizeCode(val) {

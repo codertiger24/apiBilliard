@@ -59,13 +59,6 @@ const UserSchema = new Schema(
     lastLoginAt: {
       type: Date,
     },
-    // Để mở rộng đa chi nhánh về sau; có thể để null hiện tại
-    branchId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Branch',
-      default: null,
-      index: true,
-    },
   },
   {
     timestamps: true,

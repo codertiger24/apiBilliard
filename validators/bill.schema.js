@@ -20,7 +20,7 @@ module.exports.list = {
     q: Joi.string().trim().allow('', null),              // tìm theo code
     table: objectId().optional(),
     staff: objectId().optional(),
-    branchId: objectId().allow(null, ''),
+    areaId: objectId().allow(null, ''),                  // lọc theo khu vực (snapshot)
 
     paid: Joi.boolean().optional(),
     paymentMethod: Joi.string().valid(...PAYMENT_METHODS).optional(),
@@ -66,7 +66,7 @@ module.exports.exportExcel = {
   query: Joi.object({
     from: Joi.date().iso().optional(),
     to: Joi.date().iso().optional(),
-    branchId: objectId().allow(null, ''),
+    areaId: objectId().allow(null, ''),                  // lọc theo khu vực
     paidOnly: Joi.boolean().default(true),
   }),
 };

@@ -32,7 +32,7 @@ module.exports.list = {
     table: objectId().optional(),
     staffStart: objectId().optional(),
     staffEnd: objectId().optional(),
-    branchId: objectId().allow(null, ''),
+    areaId: objectId().allow(null, ''),                     // lọc theo khu vực (snapshot)
 
     from: Joi.date().iso().optional(),                      // lọc theo startTime
     to: Joi.date().iso().optional(),

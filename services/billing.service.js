@@ -9,8 +9,9 @@ const Session = require('../models/session.model');
 const Product = require('../models/product.model');
 const Bill = require('../models/bill.model');
 
-// ======================= Time helpers =======================
-
+/* =========================================================
+ * Time helpers
+ * =======================================================*/
 function hhmmString(date) {
   const h = String(date.getHours()).padStart(2, '0');
   const m = String(date.getMinutes()).padStart(2, '0');
@@ -25,13 +26,14 @@ function inTimeRange(curHHMM, from, to) {
   const cur = hhmmToMinutes(curHHMM);
   const f = hhmmToMinutes(from);
   const t = hhmmToMinutes(to);
-  if (Number.isNaN(f) || Number.isNaN(t)) return true; // nếu thiếu, coi như hợp lệ
+  if (Number.isNaN(f) || Number.isNaN(t)) return true;
   if (f <= t) return cur >= f && cur <= t;
   return cur >= f || cur <= t; // qua đêm
 }
 
-// ======================= Settings =======================
-
+/* =========================================================
+ * Settings
+ * =======================================================*/
 async function getActiveSetting(branchId, session = null) {
   const q = branchId
     ? { scope: 'branch', branchId }
@@ -54,8 +56,9 @@ async function getActiveSetting(branchId, session = null) {
   });
 }
 
-// ======================= Pricing =======================
-
+/* =========================================================
+ * Pricing
+ * =======================================================*/
 /**
  * Chọn đơn giá/h hợp lệ tại thời điểm 'at':
  * - Ưu tiên rate override ở Table.ratePerHour
@@ -79,23 +82,7 @@ function resolveRatePerHour(tableDoc, tableTypeDoc, at = new Date()) {
   return { ratePerHour: Number(tableTypeDoc?.baseRatePerHour || 0), source: 'type' };
 }
 
-/**
- * Snapshot TableType & Rate tại thời điểm check-in
- */
-function buildTableTypeSnapshot(tableDoc, tableTypeDoc, at = new Date()) {
-  const { ratePerHour, source } = resolveRatePerHour(tableDoc, tableTypeDoc, at);
-  return {
-    typeId: tableTypeDoc._id,
-    code: String(tableTypeDoc.code || '').toUpperCase(),
-    name: tableTypeDoc.name,
-    ratePerHour,
-    rateSource: source, // 'table' | 'type'
-  };
-}
-
-/**
- * Snapshot rule tính giờ (roundingStep/mode, grace)
- */
+/** Snapshot rule tính giờ (roundingStep/mode, grace) */
 function buildBillingRuleSnapshot(settingDoc) {
   const step = Number(settingDoc?.billing?.roundingStep ?? 5);
   const mode = settingDoc?.billing?.roundingMode || 'ceil';
@@ -103,8 +90,9 @@ function buildBillingRuleSnapshot(settingDoc) {
   return { roundingStep: step, graceMinutes: grace, roundingMode: mode };
 }
 
-// ======================= Minutes & amount =======================
-
+/* =========================================================
+ * Minutes & amount
+ * =======================================================*/
 /**
  * Tính phút chơi (raw & sau làm tròn) theo rule
  * @param {Date} start
@@ -122,7 +110,6 @@ function computeMinutes(start, end, rule) {
   const grace = Number(rule?.graceMinutes || 0);
 
   if (rawMinutes <= grace) return { rawMinutes, billMinutes: 0 };
-
   if (step <= 1) return { rawMinutes, billMinutes: rawMinutes };
 
   const unit = rawMinutes / step;
@@ -135,20 +122,19 @@ function computeMinutes(start, end, rule) {
   return { rawMinutes, billMinutes };
 }
 
-/**
- * Tính tiền giờ
- */
+/** Tính tiền giờ (làm tròn đồng) */
 function computePlayAmount(ratePerHour, billMinutes) {
   const amount = (Number(ratePerHour || 0) / 60) * Number(billMinutes || 0);
-  // tiền Việt thường làm tròn đồng
   return Math.max(0, Math.round(amount));
 }
 
-// ======================= Session lifecycle =======================
+/* =========================================================
+ * Session lifecycle
+ * (NOTE: Đồng bộ chặt với models/session.model.js hiện dùng
+ *  pricingSnapshot { ratePerHour, rateSource } + billingRuleSnapshot)
+ * =======================================================*/
 
-/**
- * Check-in: tạo Session + chuyển bàn sang 'playing'
- */
+/** Check-in: tạo Session + chuyển bàn sang 'playing' */
 async function openSession({ tableId, staffId, startAt = new Date() }) {
   return withTransaction(async (tx) => {
     const [table, existing] = await Promise.all([
@@ -163,15 +149,16 @@ async function openSession({ tableId, staffId, startAt = new Date() }) {
     const tableType = table.type || await TableType.findById(table.type).session(tx);
     if (!tableType) throw new Error('TableType not found');
 
-    const tableTypeSnapshot = buildTableTypeSnapshot(table, tableType, startAt);
+    const { ratePerHour, source } = resolveRatePerHour(table, tableType, startAt);
+    const pricingSnapshot = { ratePerHour, rateSource: source };
     const billingRuleSnapshot = buildBillingRuleSnapshot(setting);
 
     const sessionDoc = await Session.create([{
       table: table._id,
-      tableTypeSnapshot,
+      pricingSnapshot,
       billingRuleSnapshot,
       startTime: startAt,
-      staffStart: staffId,
+      staffStart: staffId || null,
       items: [],
       status: 'open',
       branchId: table.branchId || null,
@@ -185,9 +172,7 @@ async function openSession({ tableId, staffId, startAt = new Date() }) {
   });
 }
 
-/**
- * Thêm sản phẩm vào phiên (nếu sản phẩm đã tồn tại -> cộng dồn)
- */
+/** Thêm sản phẩm vào phiên (nếu sản phẩm đã tồn tại -> cộng dồn) */
 async function addItem({ sessionId, productId, qty = 1, note = '' }) {
   if (qty <= 0) throw new Error('Quantity must be > 0');
 
@@ -199,18 +184,17 @@ async function addItem({ sessionId, productId, qty = 1, note = '' }) {
   if (sessionDoc.status !== 'open') throw new Error('Session is not open');
   if (!product || !product.active) throw new Error('Product not found or inactive');
 
-  // Tìm item cùng product để cộng dồn
   const existed = (sessionDoc.items || []).find(it => String(it.product) === String(product._id));
   if (existed) {
-    existed.qty += qty;
+    existed.qty = Number(existed.qty || 0) + Number(qty || 0);
     if (note) existed.note = note;
   } else {
     sessionDoc.items.push({
       product: product._id,
       nameSnapshot: product.name,
       priceSnapshot: product.price,
-      qty,
-      note,
+      qty: Number(qty || 1),
+      note: note || '',
     });
   }
 
@@ -218,9 +202,7 @@ async function addItem({ sessionId, productId, qty = 1, note = '' }) {
   return sessionDoc;
 }
 
-/**
- * Cập nhật số lượng item (<=0 thì xoá)
- */
+/** Cập nhật số lượng item (<=0 thì xoá) */
 async function updateItemQty({ sessionId, itemId, qty }) {
   const sessionDoc = await Session.findById(sessionId);
   if (!sessionDoc) throw new Error('Session not found');
@@ -229,18 +211,16 @@ async function updateItemQty({ sessionId, itemId, qty }) {
   const it = (sessionDoc.items || []).id(itemId);
   if (!it) throw new Error('Item not found');
 
-  if (qty <= 0) {
+  if (Number(qty) <= 0) {
     it.deleteOne();
   } else {
-    it.qty = qty;
+    it.qty = Number(qty);
   }
   await sessionDoc.save();
   return sessionDoc;
 }
 
-/**
- * Xoá 1 item
- */
+/** Xoá 1 item */
 async function removeItem({ sessionId, itemId }) {
   const sessionDoc = await Session.findById(sessionId);
   if (!sessionDoc) throw new Error('Session not found');
@@ -254,10 +234,8 @@ async function removeItem({ sessionId, itemId }) {
   return sessionDoc;
 }
 
-/**
- * Xem thử (preview) tiền giờ & tổng tạm tính tại thời điểm endAt (không lưu)
- */
-async function previewClose({ sessionId, endAt = new Date() }) {
+/** Xem thử (preview) tiền giờ & tổng tạm tính tại thời điểm endAt (không lưu) */
+async function previewClose({ sessionId, endAt = new Date(), discountLines = [], surcharge = 0 }) {
   const s = await Session.findById(sessionId);
   if (!s) throw new Error('Session not found');
 
@@ -266,30 +244,47 @@ async function previewClose({ sessionId, endAt = new Date() }) {
     endAt,
     { ...s.billingRuleSnapshot }
   );
-  const playAmount = computePlayAmount(s.tableTypeSnapshot.ratePerHour, billMinutes);
-  const serviceAmount = s.serviceAmount || 0;
-  const subTotal = playAmount + serviceAmount;
+  const rate = Number(s.pricingSnapshot?.ratePerHour || 0);
+  const playAmount = computePlayAmount(rate, billMinutes);
+  const serviceAmount = Number(s.serviceAmount || 0);
+  const subtotal = playAmount + serviceAmount;
+
+  // Tính discountTotal đơn giản (nếu có truyền discountLines vào để tham chiếu)
+  let discountTotal = 0;
+  for (const d of (discountLines || [])) {
+    if (!d) continue;
+    const val = Number(d.value || 0);
+    if (d.type === 'percent') {
+      discountTotal += Math.min(subtotal * (val / 100), Number(d.maxAmount || subtotal));
+    } else if (d.type === 'value') {
+      discountTotal += val;
+    }
+  }
+  const total = Math.max(0, Math.round(subtotal - discountTotal + Number(surcharge || 0)));
 
   return {
     rawMinutes,
     billMinutes,
     playAmount,
     serviceAmount,
-    subTotal,
+    subtotal,
+    discountTotal,
+    surcharge: Number(surcharge || 0),
+    total,
     items: s.items,
   };
 }
 
 /**
- * Checkout: chốt phiên + tạo bill (đã thanh toán)
- * - Có thể truyền sẵn discountLines (áp mã giảm/khuyến mãi từ nơi khác), surcharge & paymentMethod
- * - Mặc định đánh dấu paid=true; nếu muốn giữ bill chưa trả, set paid=false
+ * Checkout: chốt phiên + tạo bill
+ * - Có thể truyền discountLines (áp mã giảm), surcharge & paymentMethod
+ * - Mặc định paid=true; nếu muốn giữ bill chưa trả, set paid=false
  */
 async function checkoutSession({
   sessionId,
   staffEnd,
   endAt = new Date(),
-  discountLines = [],     // [{name, type:'percent'|'value', value, amount? , meta?}]
+  discountLines = [],   // [{name, type:'percent'|'value', value, amount?, meta?}]
   surcharge = 0,
   paymentMethod = 'cash',
   paid = true,
@@ -301,13 +296,14 @@ async function checkoutSession({
 
     // Tính phút & tiền giờ
     const { billMinutes } = computeMinutes(s.startTime, endAt, { ...s.billingRuleSnapshot });
-    const playAmount = computePlayAmount(s.tableTypeSnapshot.ratePerHour, billMinutes);
+    const rate = Number(s.pricingSnapshot?.ratePerHour || 0);
+    const playAmount = computePlayAmount(rate, billMinutes);
 
-    // Map items dịch vụ sang bill items
+    // Map items dịch vụ sang bill items — đồng bộ key để các báo cáo dùng:
     const svcItems = (s.items || []).map(it => ({
       type: 'product',
-      productId: it.product || null,
-      nameSnapshot: it.nameSnapshot,
+      product: it.product || null,               // <-- chuẩn key
+      productName: it.nameSnapshot,              // <-- để report.aggregate hiển thị tên
       priceSnapshot: it.priceSnapshot,
       qty: it.qty,
       amount: Math.max(0, Math.round((it.priceSnapshot || 0) * (it.qty || 0))),
@@ -318,26 +314,34 @@ async function checkoutSession({
     const playItem = {
       type: 'play',
       minutes: billMinutes,
-      ratePerHour: s.tableTypeSnapshot.ratePerHour,
+      ratePerHour: rate,
       amount: playAmount,
     };
 
-    // Tạo Bill
+    // Snapshot table name (nếu có)
+    let tableName = '';
+    const tableDoc = await Table.findById(s.table).select('name').session(tx);
+    if (tableDoc) tableName = tableDoc.name || '';
+
+    // Tạo Bill (để hook model xử lý subtotal/discount/total nếu có),
+    // nhưng vẫn truyền đầy đủ trường khớp với controllers/report.*
     const bill = await Bill.create([{
       session: s._id,
       table: s.table,
-      tableName: undefined, // có thể populate Table để snapshot name nếu muốn
+      tableName,
       items: [playItem, ...svcItems],
+      playMinutes: billMinutes,                // dùng cho báo cáo topTables
       playAmount,
       serviceAmount: svcItems.reduce((sum, x) => sum + x.amount, 0),
-      subTotal: 0, // để pre('validate') tự tính
-      discounts: Array.isArray(discountLines) ? discountLines : [],
+      subtotal: 0,                             // để pre('validate') tự tính nếu có
+      discountLines: Array.isArray(discountLines) ? discountLines : [],
       surcharge: Math.max(0, Number(surcharge || 0)),
-      total: 0,    // để pre('validate') tự tính
+      discountTotal: 0,                        // hook có thể tính; đảm bảo có trường để report dùng
+      total: 0,                                // hook tính cuối
       paid: !!paid,
       paidAt: paid ? new Date() : null,
       paymentMethod,
-      staff: staffEnd || s.staffStart,
+      staff: staffEnd || s.staffStart || null,
       branchId: s.branchId || null,
     }], { session: tx }).then(x => x[0]);
 
@@ -345,27 +349,26 @@ async function checkoutSession({
     s.endTime = endAt;
     s.durationMinutes = billMinutes;
     s.status = 'closed';
-    s.staffEnd = staffEnd || s.staffStart;
+    s.staffEnd = staffEnd || s.staffStart || null;
     await s.save({ session: tx });
 
     // Cập nhật trạng thái bàn
-    const table = await Table.findById(s.table).session(tx);
-    if (table) {
-      table.status = 'available';
-      await table.save({ session: tx });
+    if (tableDoc) {
+      tableDoc.status = 'available';
+      await tableDoc.save({ session: tx });
     }
 
     return { bill, session: s };
   });
 }
 
-// ======================= Exports =======================
-
+/* =========================================================
+ * Exports
+ * =======================================================*/
 module.exports = {
   // settings / pricing
   getActiveSetting,
   resolveRatePerHour,
-  buildTableTypeSnapshot,
   buildBillingRuleSnapshot,
 
   // minutes & amount

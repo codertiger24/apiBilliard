@@ -57,26 +57,14 @@ const backupSchema = Joi.object({
 });
 
 // ----- GET /settings (current) -----
+// Hệ thống chỉ còn scope 'global' → không cần tham số
 module.exports.getCurrent = {
-  query: Joi.object({
-    scope: Joi.string().valid('global', 'branch').default('global'),
-    branchId: objectId().allow(null, '').when('scope', {
-      is: 'branch',
-      then: Joi.required(),
-      otherwise: Joi.optional(),
-    }),
-  }),
+  query: Joi.object({}).unknown(false),
 };
 
-// ----- PUT /settings (upsert toàn bộ) -----
+// ----- PUT /settings (upsert toàn bộ, global only) -----
 module.exports.upsert = {
   body: Joi.object({
-    scope: Joi.string().valid('global', 'branch').default('global'),
-    branchId: objectId().allow(null).when('scope', {
-      is: 'branch',
-      then: Joi.required(),
-      otherwise: Joi.forbidden(),
-    }),
     shop: shopSchema.required(),
     billing: billingSchema.required(),
     print: printSchema.required(),
@@ -85,24 +73,14 @@ module.exports.upsert = {
   }),
 };
 
-// ----- PATCH từng phần -----
+// ----- PATCH từng phần (global only) -----
 module.exports.setShop = { body: shopSchema.required() };
 module.exports.setBilling = { body: billingSchema.required() };
 module.exports.setPrint = { body: printSchema.required() };
 module.exports.setEReceipt = { body: eReceiptSchema.required() };
 module.exports.setBackup = { body: backupSchema.required() };
 
-// (tùy chọn) PATCH /settings/scope — đổi scope/branch dùng khi tách bản ghi
-module.exports.setScope = {
-  body: Joi.object({
-    scope: Joi.string().valid('global', 'branch').required(),
-    branchId: objectId().allow(null).when('scope', {
-      is: 'branch',
-      then: Joi.required(),
-      otherwise: Joi.forbidden(),
-    }),
-  }),
-};
+// (ĐÃ BỎ setScope vì không còn branch/global phân tách)
 
 module.exports.objectId = objectId;
 module.exports.HHMM = HHMM;

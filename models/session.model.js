@@ -21,18 +21,6 @@ SessionItemSchema.virtual('amount').get(function () {
   return Number((this.priceSnapshot || 0) * (this.qty || 0));
 });
 
-/** Snapshot loại bàn/đơn giá tại thời điểm check-in */
-const TableTypeSnapshotSchema = new Schema(
-  {
-    typeId: { type: Schema.Types.ObjectId, ref: 'TableType', required: true },
-    code: { type: String, required: true, uppercase: true },
-    name: { type: String, required: true },
-    ratePerHour: { type: Number, required: true, min: 0 }, // đơn giá áp dụng cho phiên
-    rateSource: { type: String, enum: ['type', 'table'], default: 'type' }, // lấy từ loại bàn hay override của bàn
-  },
-  { _id: false }
-);
-
 /** Snapshot cấu hình làm tròn tại thời điểm check-in (đảm bảo ổn định khi admin đổi setting) */
 const BillingRuleSnapshotSchema = new Schema(
   {
@@ -42,30 +30,45 @@ const BillingRuleSnapshotSchema = new Schema(
   { _id: false }
 );
 
+/** Snapshot đơn giá/giờ áp cho phiên (lấy từ chính Table tại thời điểm mở) */
+const PricingSnapshotSchema = new Schema(
+  {
+    ratePerHour: { type: Number, required: true, min: 0 },
+    rateSource: { type: String, enum: ['table'], default: 'table' }, // để mở rộng tương lai
+  },
+  { _id: false }
+);
+
 const SessionSchema = new Schema(
   {
+    // Bàn chơi
     table: { type: Schema.Types.ObjectId, ref: 'Table', required: true, index: true },
 
-    tableTypeSnapshot: { type: TableTypeSnapshotSchema, required: true },
+    // Snapshot khu vực của bàn tại thời điểm mở phiên (để báo cáo/lọc ổn định)
+    areaId: { type: Schema.Types.ObjectId, ref: 'Area', default: null, index: true },
 
+    // Quy tắc làm tròn được snapshot lúc mở
     billingRuleSnapshot: { type: BillingRuleSnapshotSchema, required: true, default: () => ({}) },
 
-    startTime: { type: Date, required: true, index: true },
-    endTime: { type: Date, default: null, index: true },
+    // Đơn giá/giờ snapshot lúc mở
+    pricingSnapshot: { type: PricingSnapshotSchema, required: true },
 
-    // phút thực tế (sau làm tròn) được chốt khi checkout; với phiên open có thể null và tính động
+    startTime: { type: Date, required: true, index: true },
+    endTime:   { type: Date, default: null, index: true },
+
+    // phút sau làm tròn được chốt khi checkout; với phiên open có thể null
     durationMinutes: { type: Number, default: null, min: 0 },
 
-    items: { type: [SessionItemSchema], default: [] }, // giỏ dịch vụ tạm trong phiên
+    // giỏ dịch vụ tạm trong phiên
+    items: { type: [SessionItemSchema], default: [] },
 
+    // nhân viên mở/đóng phiên
     staffStart: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    staffEnd: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    staffEnd:   { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
 
     note: { type: String, trim: true, default: '' },
 
     status: { type: String, enum: SESSION_STATUS, default: 'open', index: true },
-
-    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
   },
   {
     timestamps: true,
@@ -101,11 +104,11 @@ SessionSchema.virtual('isOpen').get(function () {
 /** Tính phút chơi (raw & sau làm tròn) tại thời điểm now (hoặc dùng endTime nếu đã có) */
 SessionSchema.methods.computeMinutes = function (now = new Date()) {
   const start = this.startTime ? new Date(this.startTime) : null;
-  const end = this.endTime ? new Date(this.endTime) : now;
+  const end   = this.endTime ? new Date(this.endTime) : now;
   if (!start) return { rawMinutes: 0, billMinutes: 0 };
 
   const rawMinutes = Math.max(0, Math.ceil((end - start) / 60000)); // phút lẻ làm tròn lên
-  const step = Number(this.billingRuleSnapshot?.roundingStep || 1);
+  const step  = Number(this.billingRuleSnapshot?.roundingStep || 1);
   const grace = Number(this.billingRuleSnapshot?.graceMinutes || 0);
 
   if (rawMinutes <= grace) return { rawMinutes, billMinutes: 0 };
@@ -114,12 +117,12 @@ SessionSchema.methods.computeMinutes = function (now = new Date()) {
   return { rawMinutes, billMinutes };
 };
 
-/** Tính tiền giờ hiện tại (dựa trên snapshot rate/h) */
+/** Tính tiền giờ hiện tại (dựa trên pricingSnapshot.ratePerHour) */
 SessionSchema.methods.computePlayAmount = function (now = new Date()) {
-  const rate = Number(this.tableTypeSnapshot?.ratePerHour || 0);
+  const rate = Number(this.pricingSnapshot?.ratePerHour || 0);
   const { billMinutes } = this.computeMinutes(now);
   const amount = (rate / 60) * billMinutes;
-  return { billMinutes, amount: Math.max(0, Math.round(amount)) }; // có thể làm tròn theo quy tắc khác
+  return { billMinutes, amount: Math.max(0, Math.round(amount)) };
 };
 
 /** Chốt phiên (không lưu DB): gán endTime, durationMinutes theo rule */

@@ -11,69 +11,111 @@ const COOKIE_SAME_SITE = process.env.COOKIE_SAME_SITE || 'Lax';
 const ACCESS_COOKIE_NAME = process.env.ACCESS_COOKIE_NAME || 'access_token';
 const REFRESH_COOKIE_NAME = process.env.REFRESH_COOKIE_NAME || 'refresh_token';
 
-// -------- helpers --------
+/* ----------------------------- helpers ----------------------------- */
+
 function sanitizeUser(u) {
   if (!u) return null;
   const obj = u.toJSON ? u.toJSON() : { ...u };
-  delete obj.passwordHash;
   delete obj.password;
-  delete obj.salt;
+  delete obj.passwordHash; // legacy field
+  delete obj.__v;
   return obj;
 }
-const isBcryptHash = (s) => typeof s === 'string' && /^\$2[aby]\$\d{2}\$/.test(s);
+
+const isBcryptHash = (s) =>
+  typeof s === 'string' && /^\$2[aby]\$\d{2}\$/.test(s);
 
 async function verifyPasswordFlexible(user, plain) {
   if (!user || !plain) return false;
-
-  if (typeof user.verifyPassword === 'function') {
-    try { return await user.verifyPassword(plain); } catch {}
-  }
-
   const pwd = String(plain);
 
+  // 1. Ưu tiên method của model (hash trong field `password`)
+  if (typeof user.comparePassword === 'function') {
+    try {
+      const ok = await user.comparePassword(pwd);
+      if (ok) return true;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Kiểm tra field `password` (schema mới)
+  if (user.password) {
+    // Nếu là bcrypt hash
+    if (isBcryptHash(user.password)) {
+      try {
+        const ok = await bcrypt.compare(pwd, String(user.password));
+        if (ok) return true;
+      } catch {
+        // ignore
+      }
+    } else {
+      // Trường hợp legacy: password lưu plain-text
+      if (String(user.password) === pwd) return true;
+    }
+  }
+
+  // 3. Kiểm tra field legacy `passwordHash` (dữ liệu cũ trước khi sửa schema)
   if (user.passwordHash) {
-    try { if (await bcrypt.compare(pwd, String(user.passwordHash))) return true; } catch {}
+    if (isBcryptHash(user.passwordHash)) {
+      try {
+        const ok = await bcrypt.compare(pwd, String(user.passwordHash));
+        if (ok) return true;
+      } catch {
+        // ignore
+      }
+    } else {
+      // Trường hợp xấu: passwordHash lại lưu plain-text
+      if (String(user.passwordHash) === pwd) return true;
+    }
   }
-  if (user.password && isBcryptHash(user.password)) {
-    try { if (await bcrypt.compare(pwd, String(user.password))) return true; } catch {}
-  }
-  if (user.password && !isBcryptHash(user.password)) {
-    if (String(user.password) === pwd) return true;
-  }
+
   return false;
 }
 
 async function setNewPassword(user, newPassword) {
-  if (typeof user.setPassword === 'function') {
-    await user.setPassword(newPassword);
-    return;
+  // Schema sẽ tự hash field `password` khi save (pre('save'))
+  user.password = String(newPassword);
+
+  // Dọn legacy field nếu có
+  if (user.passwordHash) {
+    user.passwordHash = undefined;
   }
-  const salt = await bcrypt.genSalt(10);
-  user.passwordHash = await bcrypt.hash(String(newPassword), salt);
-  // nếu schema bắt buộc `password`, giữ plaintext để pass validate (dev)
-  if (User.schema.path('password')) user.password = newPassword;
 }
 
 function maybeSetCookies(res, { token, refreshToken }) {
   if (!JWT_COOKIE) return;
-  const common = { httpOnly: true, secure: COOKIE_SECURE, sameSite: COOKIE_SAME_SITE, domain: COOKIE_DOMAIN, path: '/' };
-  res.cookie(ACCESS_COOKIE_NAME, token, { ...common, maxAge: 60 * 60 * 1000 });
-  res.cookie(REFRESH_COOKIE_NAME, refreshToken, { ...common, maxAge: 7 * 24 * 60 * 60 * 1000 });
+  const common = {
+    httpOnly: true,
+    secure: COOKIE_SECURE,
+    sameSite: COOKIE_SAME_SITE,
+    domain: COOKIE_DOMAIN,
+    path: '/',
+  };
+  res.cookie(ACCESS_COOKIE_NAME, token, {
+    ...common,
+    maxAge: 60 * 60 * 1000, // 1h
+  });
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
+    ...common,
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7d
+  });
 }
+
 function maybeClearCookies(res) {
   if (!JWT_COOKIE) return;
   res.clearCookie(ACCESS_COOKIE_NAME, { path: '/', domain: COOKIE_DOMAIN });
   res.clearCookie(REFRESH_COOKIE_NAME, { path: '/', domain: COOKIE_DOMAIN });
 }
 
-// -------- controllers --------
+/* ----------------------------- controllers ----------------------------- */
 
 // POST /auth/login
 exports.login = R.asyncHandler(async (req, res) => {
   const { username, password } = req.body;
   const uname = String(username || '').trim().toLowerCase();
 
-  // ÉP CHỌN các field bị select:false
+  // Need password for comparison
   const user = await User.findOne({ username: uname }).select('+password +passwordHash');
 
   if (!user || user.active === false) {
@@ -83,11 +125,11 @@ exports.login = R.asyncHandler(async (req, res) => {
   const ok = await verifyPasswordFlexible(user, password);
   if (!ok) return R.fail(res, 401, 'Sai mật khẩu');
 
-  // Nếu pass bằng plaintext / hash nằm ở field `password` ⇒ chuẩn hoá về passwordHash
-  const usedPlain = user.password && !isBcryptHash(user.password) && String(user.password) === String(password);
-  const usedPwdFieldBcrypt = user.password && isBcryptHash(user.password);
-
-  if (usedPlain || usedPwdFieldBcrypt) {
+  // Nếu legacy lưu plain-text hoặc chỉ có passwordHash thì nâng cấp sang field `password`
+  if (
+    (!user.password || !isBcryptHash(user.password)) &&
+    (user.password || user.passwordHash)
+  ) {
     await setNewPassword(user, password);
   }
 
@@ -100,12 +142,16 @@ exports.login = R.asyncHandler(async (req, res) => {
   return R.ok(res, { user: sanitizeUser(user), ...tokens }, 'Đăng nhập thành công');
 });
 
-// POST /auth/refresh (đã verify refresh)
+// POST /auth/refresh (refresh token is already verified by middleware)
 exports.refresh = R.asyncHandler(async (req, res) => {
   const token = signAccessToken(req.user);
   if (JWT_COOKIE) {
     res.cookie(ACCESS_COOKIE_NAME, token, {
-      httpOnly: true, secure: COOKIE_SECURE, sameSite: COOKIE_SAME_SITE, domain: COOKIE_DOMAIN, path: '/',
+      httpOnly: true,
+      secure: COOKIE_SECURE,
+      sameSite: COOKIE_SAME_SITE,
+      domain: COOKIE_DOMAIN,
+      path: '/',
       maxAge: 60 * 60 * 1000,
     });
   }

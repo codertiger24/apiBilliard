@@ -1,6 +1,5 @@
 // controllers/bill.controller.js
 const path = require('path');
-const fs = require('fs');
 const R = require('../utils/response');
 const Bill = require('../models/bill.model');
 const { ensureRange } = require('../utils/time');
@@ -8,9 +7,9 @@ const { ensureRange } = require('../utils/time');
 function safeRequire(p) {
   try { return require(p); } catch { return null; }
 }
-const Exporter = safeRequire('../services/export.service');   // export Excel/PDF (nếu có)
-const QR = safeRequire('../services/qr.service');             // tạo QR (nếu có)
-const Billing = safeRequire('../services/billing.service');   // để lấy setting eReceipt
+const Exporter = safeRequire('../services/export.service');   // export Excel/PDF (optional)
+const QR = safeRequire('../services/qr.service');             // QR generator (optional)
+const Billing = safeRequire('../services/billing.service');   // to fetch eReceipt setting
 const { getActiveSetting } = Billing || {};
 
 /* ====================== Helpers ====================== */
@@ -27,7 +26,9 @@ function parseSort(sortStr = '-createdAt') {
   return { [field]: desc ? -1 : 1 };
 }
 
-function buildQuery({ q, table, staff, branchId, paid, paymentMethod, from, to, minTotal, maxTotal }) {
+function buildQuery({
+  q, table, staff, branchId, paid, paymentMethod, from, to, minTotal, maxTotal,
+}) {
   const query = {};
   if (q) {
     const rx = new RegExp(String(q).trim().replace(/\s+/g, '.*'), 'i');
@@ -47,11 +48,15 @@ function buildQuery({ q, table, staff, branchId, paid, paymentMethod, from, to, 
     if (from) query.createdAt.$gte = new Date(from);
     if (to) query.createdAt.$lte = new Date(to);
   }
-  if (typeof minTotal !== 'undefined' || typeof maxTotal !== 'undefined') {
+
+  const hasMin = typeof minTotal !== 'undefined' && minTotal !== null && minTotal !== '';
+  const hasMax = typeof maxTotal !== 'undefined' && maxTotal !== null && maxTotal !== '';
+  if (hasMin || hasMax) {
     query.total = {};
-    if (typeof minTotal !== 'undefined') query.total.$gte = Number(minTotal);
-    if (typeof maxTotal !== 'undefined') query.total.$lte = Number(maxTotal);
+    if (hasMin) query.total.$gte = Number(minTotal);
+    if (hasMax) query.total.$lte = Number(maxTotal);
   }
+
   return query;
 }
 
@@ -79,7 +84,9 @@ exports.list = R.asyncHandler(async (req, res) => {
   const limitNum = Math.min(500, Math.max(1, Number(limit) || 50));
   const skip = (pageNum - 1) * limitNum;
 
-  const query = buildQuery({ q, table, staff, branchId, paid, paymentMethod, from, to, minTotal, maxTotal });
+  const query = buildQuery({
+    q, table, staff, branchId, paid, paymentMethod, from, to, minTotal, maxTotal,
+  });
   const sortObj = parseSort(String(sort));
 
   const [items, total] = await Promise.all([
@@ -149,12 +156,9 @@ exports.exportExcel = R.asyncHandler(async (req, res) => {
     to: range.to,
   });
 
-  // Limit an toàn để export (có thể chỉnh qua ENV nếu cần)
+  // Limit an toàn để export
   const MAX_EXPORT = Number(process.env.MAX_EXPORT_ROWS || 10000);
-  const items = await Bill.find(query)
-    .sort({ createdAt: 1 })
-    .limit(MAX_EXPORT)
-    .lean();
+  const items = await Bill.find(query).sort({ createdAt: 1 }).limit(MAX_EXPORT).lean();
 
   if (!Exporter || typeof Exporter.exportBillsToExcel !== 'function') {
     // Fallback: trả JSON nếu service chưa sẵn
@@ -167,13 +171,21 @@ exports.exportExcel = R.asyncHandler(async (req, res) => {
     });
   }
 
-  const fileLabel = `${range.from.toISOString().slice(0,10)}_to_${range.to.toISOString().slice(0,10)}`;
+  const fileLabel = `${range.from.toISOString().slice(0, 10)}_to_${range.to
+    .toISOString()
+    .slice(0, 10)}`;
   const { filePath, fileName } = await Exporter.exportBillsToExcel(items, {
     fileName: `bills_${fileLabel}.xlsx`,
   });
 
-  res.setHeader('Content-Disposition', `attachment; filename="${fileName || path.basename(filePath)}"`);
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${fileName || path.basename(filePath)}"`
+  );
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
   return res.sendFile(path.resolve(filePath));
 });
 
@@ -190,7 +202,11 @@ exports.print = R.asyncHandler(async (req, res) => {
 
   if (!Exporter || typeof Exporter.renderBillPDF !== 'function') {
     // Fallback khi chưa có module in: trả JSON để FE tự hiển thị
-    return R.ok(res, { bill, paperSize, embedQR: String(embedQR) === 'true' }, 'Print service not available');
+    return R.ok(
+      res,
+      { bill, paperSize, embedQR: String(embedQR) === 'true' },
+      'Print service not available'
+    );
   }
 
   // Lấy cấu hình in/branding nếu cần
@@ -244,14 +260,13 @@ exports.qr = R.asyncHandler(async (req, res) => {
   return R.ok(res, { text }, 'QR service not available');
 });
 
-// (Tuỳ chọn) DELETE /bills/:id — cân nhắc khoá theo quyền & chính sách
+// (Tuỳ chọn) DELETE /bills/:id
 exports.remove = R.asyncHandler(async (req, res) => {
   const id = req.params.id;
   const doc = await Bill.findById(id);
   if (!doc) return R.fail(res, 404, 'Bill not found');
 
-  // Tùy chính sách: cho xoá hay chỉ "void" ở session?
-  // Ở đây: nếu đã paid → không cho xoá
+  // Chính sách: nếu đã paid → không cho xoá
   if (doc.paid) return R.fail(res, 409, 'Không thể xoá hoá đơn đã thanh toán');
 
   await Bill.findByIdAndDelete(id);

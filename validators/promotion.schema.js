@@ -21,13 +21,12 @@ const timeRangeSchema = Joi.object({
   to:   Joi.string().pattern(HHMM).required().messages({ 'string.pattern.base': 'to phải dạng HH:mm' }),
 });
 
-// Điều kiện thời gian/bối cảnh
+// Điều kiện thời gian/bối cảnh (đÃ BỎ tableTypes)
 const timeRuleSchema = Joi.object({
-  validFrom: Joi.date().iso().allow(null),
-  validTo:   Joi.date().iso().allow(null),
+  validFrom:  Joi.date().iso().allow(null),
+  validTo:    Joi.date().iso().allow(null),
   daysOfWeek: Joi.array().items(Joi.number().integer().min(0).max(6)).unique().default([]),
   timeRanges: Joi.array().items(timeRangeSchema).default([]),
-  tableTypes: Joi.array().items(objectId()).unique().default([]),
   minMinutes: Joi.number().integer().min(0).default(0),
 }).custom((v, helpers) => {
   if (v.validFrom && v.validTo && new Date(v.validFrom) > new Date(v.validTo)) {
@@ -46,12 +45,11 @@ const productRuleSchema = Joi.object({
   })).default([]),
 });
 
-// Điều kiện hóa đơn
+// Điều kiện hóa đơn (đÃ BỎ tableTypes)
 const billRuleSchema = Joi.object({
-  minSubtotal: Joi.number().min(0).default(0),
+  minSubtotal:      Joi.number().min(0).default(0),
   minServiceAmount: Joi.number().min(0).default(0),
-  minPlayMinutes: Joi.number().integer().min(0).default(0),
-  tableTypes: Joi.array().items(objectId()).unique().default([]),
+  minPlayMinutes:   Joi.number().integer().min(0).default(0),
 });
 
 // Cấu hình giảm giá
@@ -76,7 +74,6 @@ module.exports.list = {
     scope: Joi.string().valid(...SCOPE).optional(),
     active: Joi.boolean().optional(),
     at: Joi.date().iso().optional(),                    // lọc hiệu lực tại thời điểm
-    branchId: objectId().allow(null, ''),
 
     // sort: 'applyOrder' | '-applyOrder' | 'createdAt' | '-createdAt' | 'name' | '-name' | 'code' | '-code'
     sort: Joi.string()
@@ -98,14 +95,13 @@ module.exports.create = {
     applyOrder: Joi.number().integer().min(0).default(100),
     stackable: Joi.boolean().default(true),
 
-    timeRule: timeRuleSchema.when('scope', { is: 'time', then: Joi.required(), otherwise: Joi.forbidden() }),
+    timeRule:    timeRuleSchema.when('scope', { is: 'time',    then: Joi.required(), otherwise: Joi.forbidden() }),
     productRule: productRuleSchema.when('scope', { is: 'product', then: Joi.required(), otherwise: Joi.forbidden() }),
-    billRule: billRuleSchema.when('scope', { is: 'bill', then: Joi.required(), otherwise: Joi.forbidden() }),
+    billRule:    billRuleSchema.when('scope', { is: 'bill',    then: Joi.required(), otherwise: Joi.forbidden() }),
 
     discount: discountSchema.required(),
 
     description: Joi.string().trim().max(500).allow('', null).optional(),
-    branchId: objectId().allow(null).optional(),
   }),
 };
 
@@ -129,7 +125,6 @@ module.exports.update = {
     discount: discountSchema,
 
     description: Joi.string().trim().max(500).allow('', null),
-    branchId: objectId().allow(null),
   }).min(1),
 };
 

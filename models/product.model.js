@@ -11,7 +11,7 @@ const ProductSchema = new Schema(
       maxlength: 160,
     },
 
-    // Mã hàng hoá: duy nhất theo chi nhánh
+    // Mã hàng hoá: duy nhất (toàn hệ thống). Cho phép null.
     sku: {
       type: String,
       trim: true,
@@ -69,14 +69,6 @@ const ProductSchema = new Schema(
       index: true,
     },
 
-    // Dự phòng đa chi nhánh
-    branchId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Branch',
-      default: null,
-      index: true,
-    },
-
     // Ghi chú tuỳ ý
     note: {
       type: String,
@@ -102,16 +94,16 @@ const ProductSchema = new Schema(
 
 // ===== Indexes =====
 
-// Duy nhất SKU trong cùng chi nhánh (cho phép null)
+// SKU duy nhất toàn hệ thống (cho phép null)
 ProductSchema.index(
-  { branchId: 1, sku: 1 },
+  { sku: 1 },
   {
     unique: true,
     partialFilterExpression: { sku: { $type: 'string' } },
   }
 );
 
-// Tìm nhanh theo tên và kích hoạt
+// Tìm nhanh theo tên, lọc theo kích hoạt & danh mục
 ProductSchema.index({ name: 1 });
 ProductSchema.index({ active: 1, category: 1 });
 

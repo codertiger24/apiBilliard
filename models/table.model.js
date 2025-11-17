@@ -15,11 +15,11 @@ const TableSchema = new Schema(
       maxlength: 64,
     },
 
-    // Loại bàn: Pool/Carom/3C..., tham chiếu TableType
-    type: {
+    // Khu vực (Area) chứa bàn này
+    areaId: {
       type: Schema.Types.ObjectId,
-      ref: 'TableType',
-      required: true,
+      ref: 'Area',
+      default: null,
       index: true,
     },
 
@@ -31,12 +31,11 @@ const TableSchema = new Schema(
       index: true,
     },
 
-    // (Tùy chọn) Ghi đè đơn giá/giờ cho riêng bàn này.
-    // Nếu null -> dùng baseRatePerHour ở TableType tại thời điểm check-in (snapshot).
+    // Đơn giá/giờ áp dụng cho bàn này (vì đã bỏ TableType)
     ratePerHour: {
       type: Number,
+      required: true, // bắt buộc vì không còn nguồn giá kế thừa
       min: 0,
-      default: null,
     },
 
     // Thứ tự hiển thị trong lưới bàn (nhân viên)
@@ -44,14 +43,6 @@ const TableSchema = new Schema(
 
     // Bàn đang sử dụng hay tạm ngưng trong cấu hình
     active: { type: Boolean, default: true, index: true },
-
-    // Dự phòng đa chi nhánh (hiện có thể để null)
-    branchId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Branch',
-      default: null,
-      index: true,
-    },
   },
   {
     timestamps: true,
@@ -69,17 +60,21 @@ const TableSchema = new Schema(
 );
 
 // ===== Indexes =====
-// Tránh trùng tên bàn trong cùng một chi nhánh
+
+// Không trùng tên bàn trong cùng một khu vực
+// (Nếu areaId = null, ràng buộc unique sẽ áp cho nhóm null — tránh trùng trong “khu vực chưa gán”)
 TableSchema.index(
-  { branchId: 1, name: 1 },
+  { areaId: 1, name: 1 },
   {
     unique: true,
-    // Cho phép trùng name nếu name không phải string (phòng trường hợp dữ liệu cũ lỗi)
     partialFilterExpression: { name: { $type: 'string' } },
   }
 );
 
-// Tên bàn để tìm nhanh
+// Hỗ trợ sắp xếp/lọc nhanh theo khu vực
+TableSchema.index({ areaId: 1, orderIndex: 1 });
+
+// Tên bàn để tìm nhanh (search theo prefix/sort theo tên)
 TableSchema.index({ name: 1 });
 
 // ===== Virtuals & helpers =====
@@ -87,8 +82,8 @@ TableSchema.virtual('isAvailable').get(function () {
   return this.active && this.status === 'available';
 });
 
-// Gợi ý: không viết logic tính giá ở đây (cần snapshot & rule KM).
-// Hãy dùng billing.service để lấy effectiveRatePerHour và tính playAmount.
+// Gợi ý: logic tính giá/giờ, làm tròn, khuyến mãi… hãy dùng billing.service.
+// Model chỉ lưu dữ liệu gốc (ratePerHour) cho mỗi bàn.
 
 module.exports = mongoose.model('Table', TableSchema);
 module.exports.TABLE_STATUS = TABLE_STATUS;

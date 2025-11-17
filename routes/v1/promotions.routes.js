@@ -8,28 +8,59 @@ const { validate } = require('../../middlewares/validate.middleware');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const { requireAdmin } = require('../../middlewares/role.middleware');
 
-// Chỉ admin quản trị khuyến mãi
+/* -------------------------------------------------------------------------- */
+/*                      Admin-only: Promotion management                      */
+/* -------------------------------------------------------------------------- */
+// Tất cả route phía dưới yêu cầu admin đã đăng nhập
 router.use(requireAuth, requireAdmin);
 
-// List
-router.get('/promotions', validate(schema.list), ctrl.list);
+// GET /api/v1/promotions
+router.get(
+  '/promotions',
+  validate(schema.list),
+  ctrl.list
+);
 
-// Get one
-router.get('/promotions/:id', validate(schema.getOne), ctrl.getOne);
+// GET /api/v1/promotions/:id
+router.get(
+  '/promotions/:id',
+  validate(schema.getOne),
+  ctrl.getOne
+);
 
-// Create
-router.post('/promotions', validate(schema.create), ctrl.create);
+// POST /api/v1/promotions
+router.post(
+  '/promotions',
+  validate(schema.create),
+  ctrl.create
+);
 
-// Update
-router.put('/promotions/:id', validate(schema.update), ctrl.update);
+// PUT /api/v1/promotions/:id
+router.put(
+  '/promotions/:id',
+  validate(schema.update),
+  ctrl.update
+);
 
-// Toggle active
-router.patch('/promotions/:id/active', validate(schema.setActive), ctrl.setActive);
+// PATCH /api/v1/promotions/:id/active
+router.patch(
+  '/promotions/:id/active',
+  validate(schema.setActive),
+  ctrl.setActive
+);
 
-// Set apply order
-router.patch('/promotions/:id/apply-order', validate(schema.setApplyOrder), ctrl.setApplyOrder);
+// PATCH /api/v1/promotions/:id/apply-order
+router.patch(
+  '/promotions/:id/apply-order',
+  validate(schema.setApplyOrder),
+  ctrl.setApplyOrder
+);
 
-// Delete
-router.delete('/promotions/:id', validate(schema.remove), ctrl.remove);
+// DELETE /api/v1/promotions/:id
+router.delete(
+  '/promotions/:id',
+  validate(schema.remove),
+  ctrl.remove
+);
 
 module.exports = router;

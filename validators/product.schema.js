@@ -29,7 +29,6 @@ module.exports.list = {
     tag: Joi.string().trim().max(40).optional(),
     active: Joi.boolean().optional(),
     isService: Joi.boolean().optional(),
-    branchId: objectId().allow(null, ''),
 
     minPrice: price.optional(),
     maxPrice: price.optional(),
@@ -38,7 +37,7 @@ module.exports.list = {
     sort: Joi.string().trim()
       .pattern(/^(-)?(name|price|createdAt)$/)
       .default('name'),
-  }).with('minPrice', 'maxPrice'), // nếu có minPrice thì nên có maxPrice
+  }).with('minPrice', 'maxPrice'),
 };
 
 // ====== CREATE (POST /products) ======
@@ -53,7 +52,6 @@ module.exports.create = {
     images: Joi.array().items(Joi.string().trim()).max(10).default([]), // lưu path '/uploads/...'
     tags: Joi.array().items(Joi.string().trim().max(40)).max(20).default([]),
     active: Joi.boolean().default(true),
-    branchId: objectId().allow(null).optional(),
     note: Joi.string().trim().max(500).allow('', null).optional(),
   }),
 };
@@ -71,7 +69,6 @@ module.exports.update = {
     images: Joi.array().items(Joi.string().trim()).max(10),
     tags: Joi.array().items(Joi.string().trim().max(40)).max(20),
     active: Joi.boolean(),
-    branchId: objectId().allow(null),
     note: Joi.string().trim().max(500).allow('', null),
   }).min(1),
 };
@@ -127,4 +124,3 @@ module.exports.remove = {
 };
 
 module.exports.objectId = objectId;
-    

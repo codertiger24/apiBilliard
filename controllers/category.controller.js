@@ -50,12 +50,12 @@ exports.list = R.asyncHandler(async (req, res) => {
   const sortObj = parseSort(String(sort));
 
   const [items, total] = await Promise.all([
-    Category.find(query).sort(sortObj).skip(skip).limit(limitNum),
+    Category.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
     Category.countDocuments(query),
   ]);
 
   return R.paged(res, {
-    items: items.map(sanitize),
+    items,
     page: pageNum,
     limit: limitNum,
     total,
@@ -65,11 +65,11 @@ exports.list = R.asyncHandler(async (req, res) => {
 
 // GET /categories/:id
 exports.getOne = R.asyncHandler(async (req, res) => {
-  const doc = await Category.findById(req.params.id);
+  const doc = await Category.findById(req.params.id).lean();
   if (!doc) return R.fail(res, 404, 'Category not found');
 
   const productsUsing = await Product.countDocuments({ category: doc._id });
-  return R.ok(res, { ...sanitize(doc), productsUsing });
+  return R.ok(res, { ...doc, productsUsing });
 });
 
 // POST /categories
@@ -92,7 +92,7 @@ exports.create = R.asyncHandler(async (req, res) => {
     oi = count;
   }
 
-  const doc = await Category.create({
+  const payload = {
     name: String(name || '').trim(),
     code: String(code || '').trim().toUpperCase(),
     description,
@@ -101,8 +101,21 @@ exports.create = R.asyncHandler(async (req, res) => {
     orderIndex: Number(oi) || 0,
     active: !!active,
     branchId: branchId || null,
-  });
+  };
 
+  // Chặn trùng (branchId, code) / (branchId, name) sớm để báo lỗi đẹp
+  const dup = await Category.findOne({
+    branchId: payload.branchId,
+    $or: [{ code: payload.code }, { name: payload.name }],
+  })
+    .select('_id code name')
+    .lean();
+
+  if (dup) {
+    return R.fail(res, 409, 'Category code/name already exists in this branch');
+  }
+
+  const doc = await Category.create(payload);
   return R.created(res, sanitize(doc), 'Category created');
 });
 
@@ -122,14 +135,26 @@ exports.update = R.asyncHandler(async (req, res) => {
   const doc = await Category.findById(req.params.id);
   if (!doc) return R.fail(res, 404, 'Category not found');
 
-  if (typeof name !== 'undefined') doc.name = name;
+  if (typeof name !== 'undefined') doc.name = String(name || '').trim();
   if (typeof code !== 'undefined') doc.code = String(code || '').trim().toUpperCase();
-  if (typeof description !== 'undefined') doc.description = description;
-  if (typeof icon !== 'undefined') doc.icon = icon;
-  if (typeof color !== 'undefined') doc.color = color;
+  if (typeof description !== 'undefined') doc.description = description ?? '';
+  if (typeof icon !== 'undefined') doc.icon = icon ?? '';
+  if (typeof color !== 'undefined') doc.color = color ?? '';
   if (typeof orderIndex !== 'undefined') doc.orderIndex = Number(orderIndex) || 0;
   if (typeof active !== 'undefined') doc.active = !!active;
-  if (typeof branchId !== 'undefined') doc.branchId = branchId;
+  if (typeof branchId !== 'undefined') doc.branchId = branchId || null;
+
+  // Kiểm tra trùng (branchId, code/name) khi có thay đổi
+  if (doc.isModified('code') || doc.isModified('name') || doc.isModified('branchId')) {
+    const exists = await Category.findOne({
+      _id: { $ne: doc._id },
+      branchId: doc.branchId,
+      $or: [{ code: doc.code }, { name: doc.name }],
+    })
+      .select('_id')
+      .lean();
+    if (exists) return R.fail(res, 409, 'Category code/name already exists in this branch');
+  }
 
   await doc.save();
   return R.ok(res, sanitize(doc), 'Category updated');

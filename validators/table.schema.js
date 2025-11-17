@@ -17,11 +17,10 @@ module.exports.list = {
   query: Joi.object({
     page: Joi.number().integer().min(1).default(1),
     limit: Joi.number().integer().min(1).max(200).default(50),
-    q: Joi.string().trim().allow('', null),        // search theo name
+    q: Joi.string().trim().allow('', null),                 // search theo name
     status: Joi.string().valid(...TABLE_STATUS).optional(),
-    type: objectId().optional(),                    // TableType id
+    areaId: objectId().allow(null, ''),                     // lọc theo khu vực
     active: Joi.boolean().optional(),
-    branchId: objectId().allow(null, ''),
 
     // sort: 'orderIndex' | '-orderIndex' | 'name' | '-name' | 'createdAt' | '-createdAt' | 'status'
     sort: Joi.string()
@@ -35,11 +34,10 @@ module.exports.list = {
 module.exports.create = {
   body: Joi.object({
     name: Joi.string().trim().max(64).required(),
-    type: objectId().required(),                    // TableType
-    ratePerHour: Joi.number().min(0).allow(null).optional(), // override, null = dùng theo loại
+    areaId: objectId().allow(null).optional(),              // có thể chưa gán khu vực
+    ratePerHour: Joi.number().min(0).required(),            // bắt buộc vì đã bỏ TableType
     orderIndex: Joi.number().integer().min(0).default(0),
     active: Joi.boolean().default(true),
-    branchId: objectId().allow(null).optional(),
   }),
 };
 
@@ -48,11 +46,10 @@ module.exports.update = {
   params: Joi.object({ id: objectId().required() }),
   body: Joi.object({
     name: Joi.string().trim().max(64),
-    type: objectId(),
-    ratePerHour: Joi.number().min(0).allow(null),
+    areaId: objectId().allow(null),
+    ratePerHour: Joi.number().min(0),
     orderIndex: Joi.number().integer().min(0),
     active: Joi.boolean(),
-    branchId: objectId().allow(null),
   }).min(1),
 };
 
@@ -76,19 +73,23 @@ module.exports.setActive = {
 module.exports.setRate = {
   params: Joi.object({ id: objectId().required() }),
   body: Joi.object({
-    ratePerHour: Joi.number().min(0).allow(null).required(),
+    ratePerHour: Joi.number().min(0).required(),
   }),
 };
 
 // PATCH /tables/reorder  (đổi thứ tự nhiều bàn)
 module.exports.reorder = {
   body: Joi.object({
-    items: Joi.array().min(1).max(1000).items(
-      Joi.object({
-        id: objectId().required(),
-        orderIndex: Joi.number().integer().min(0).required(),
-      })
-    ).required(),
+    items: Joi.array()
+      .min(1)
+      .max(1000)
+      .items(
+        Joi.object({
+          id: objectId().required(),
+          orderIndex: Joi.number().integer().min(0).required(),
+        })
+      )
+      .required(),
   }),
 };
 

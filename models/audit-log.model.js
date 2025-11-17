@@ -19,8 +19,7 @@ const ACTIONS = Object.freeze([
   'PRODUCT_CREATE', 'PRODUCT_UPDATE', 'PRODUCT_DELETE',
   'CATEGORY_CREATE', 'CATEGORY_UPDATE', 'CATEGORY_DELETE',
 
-  // TableType / Promotion / Setting / User
-  'TABLETYPE_CREATE', 'TABLETYPE_UPDATE', 'TABLETYPE_DELETE',
+  // Promotion / Setting / User
   'PROMOTION_CREATE', 'PROMOTION_UPDATE', 'PROMOTION_DELETE',
   'SETTING_UPDATE',
   'USER_CREATE', 'USER_UPDATE', 'USER_DELETE', 'USER_ROLE_CHANGE',
@@ -28,7 +27,7 @@ const ACTIONS = Object.freeze([
 
 const TARGETS = Object.freeze([
   'auth', 'table', 'session', 'bill', 'product', 'category',
-  'tableType', 'promotion', 'setting', 'user', 'system'
+  'promotion', 'setting', 'user', 'system'
 ]);
 
 const SOURCES = Object.freeze(['api', 'web', 'system']);
@@ -54,9 +53,6 @@ const AuditLogSchema = new Schema(
 
     // Thông tin client
     client: { type: ClientInfoSchema, default: () => ({}) },
-
-    // Chi nhánh (để lọc theo branch)
-    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null, index: true },
   },
   {
     timestamps: true,
@@ -78,7 +74,6 @@ AuditLogSchema.index({ createdAt: -1 });
 AuditLogSchema.index({ action: 1, createdAt: -1 });
 AuditLogSchema.index({ targetType: 1, targetId: 1, createdAt: -1 });
 AuditLogSchema.index({ actor: 1, createdAt: -1 });
-AuditLogSchema.index({ branchId: 1, createdAt: -1 });
 
 /** Helper: trích IP thực từ req (tôn trọng proxy) */
 function getIpFromReq(req) {
@@ -108,11 +103,10 @@ function detectSource(req, fallback = 'api') {
  * @param {String} [p.targetLabel] - tên hiển thị nhanh (vd Bàn 1, BillCode...)
  * @param {any} [p.meta] - dữ liệu thêm (before/after/payload)
  * @param {import('express').Request} [p.req] - để lấy ip/ua/source
- * @param {ObjectId|null} [p.branchId] - chi nhánh
  */
 AuditLogSchema.statics.log = async function ({
   actor, action, targetType, targetId = null, targetLabel = '',
-  meta = null, req = null, branchId = null, source = null
+  meta = null, req = null, source = null
 }) {
   const client = {
     ip: getIpFromReq(req),
@@ -121,7 +115,7 @@ AuditLogSchema.statics.log = async function ({
   };
 
   const doc = await this.create({
-    actor, action, targetType, targetId, targetLabel, meta, client, branchId,
+    actor, action, targetType, targetId, targetLabel, meta, client,
   });
 
   return doc;
