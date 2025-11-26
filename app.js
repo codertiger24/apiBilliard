@@ -8,7 +8,6 @@ const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const hbs = require('hbs');
-
 const db = require('./config/db');
 const { requestId, httpLogger } = require('./utils/logger');
 
@@ -143,6 +142,7 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 /* -------------------------------------------------------------------------- */
 /*                                Web routes                                  */
 /* -------------------------------------------------------------------------- */

@@ -1,17 +1,36 @@
 // routes/v1/products.routes.js
 const express = require('express');
 const router = express.Router();
-
+const R = require('../../utils/response');  
 const ctrl = require('../../controllers/product.controller');
 const schema = require('../../validators/product.schema');
 const { validate } = require('../../middlewares/validate.middleware');
 const { requireAuth } = require('../../middlewares/auth.middleware');
 const { requireRole, requireAdmin } = require('../../middlewares/role.middleware');
+const { upload } = require('../../middlewares/upload.middleware');
+
 
 /* -------------------------------------------------------------------------- */
 /*                     Staff & Admin: Read-only access                        */
 /* -------------------------------------------------------------------------- */
 
+// POST /api/v1/products/upload-image
+router.post(
+  '/products/upload-image',
+  requireAuth,
+  requireAdmin,
+  upload.single('image'), // field 'image'
+  (req, res) => {
+    if (!req.file) {
+      return R.fail(res, 400, 'No file uploaded');
+    }
+
+    // Đường dẫn tương đối để lưu vào Product.images
+    const relPath = `/uploads/products/${req.file.filename}`;
+
+    return R.ok(res, { path: relPath }, 'Image uploaded');
+  }
+);
 // GET /api/v1/products
 router.get(
   '/products',
