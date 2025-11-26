@@ -287,7 +287,7 @@ async function checkoutSession({
   discountLines = [],   // [{name, type:'percent'|'value', value, amount?, meta?}]
   surcharge = 0,
   paymentMethod = 'cash',
-  paid = true,
+  paid = false,
 }) {
   return withTransaction(async (tx) => {
     const s = await Session.findById(sessionId).session(tx);

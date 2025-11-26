@@ -206,6 +206,76 @@ async function revenueTimeseries({
   return Bill.aggregate(pipeline);
 }
 
+/** -------------------- 2b) Chuỗi thời gian linh hoạt: ngày / tháng -------------------- */
+/**
+ * Doanh thu theo ngày hoặc theo tháng.
+ * groupBy = 'day' | 'month'
+ * - 'day'   → date: 'YYYY-MM-DD'
+ * - 'month' → date: 'YYYY-MM'
+ * @returns [{ date, total, bills, playAmount, serviceAmount, discountTotal, surcharge }]
+ */
+async function revenueSeries({
+  from,
+  to,
+  branchId = null,
+  paidOnly = true,
+  tz = DEFAULT_TZ,
+  groupBy = 'day',
+} = {}) {
+  const range = ensureRange({ from, to, tz });
+  const $match = matchStage({ ...range, branchId, paidOnly });
+
+  const format = groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d';
+
+  const pipeline = [
+    { $match },
+    normalizeDiscountArray,
+    addDiscountTotal,
+    {
+      $project: {
+        date: {
+          $dateToString: {
+            format,
+            date: '$createdAt',
+            timezone: range.tz,
+          },
+        },
+        playAmount: 1,
+        serviceAmount: 1,
+        discountTotal: 1,
+        surcharge: 1,
+        total: 1,
+      },
+    },
+    {
+      $group: {
+        _id: '$date',
+        bills: { $sum: 1 },
+        playAmount: { $sum: '$playAmount' },
+        serviceAmount: { $sum: '$serviceAmount' },
+        discountTotal: { $sum: '$discountTotal' },
+        surcharge: { $sum: '$surcharge' },
+        total: { $sum: '$total' },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        date: '$_id',
+        bills: 1,
+        playAmount: 1,
+        serviceAmount: 1,
+        discountTotal: 1,
+        surcharge: 1,
+        total: 1,
+      },
+    },
+    { $sort: { date: 1 } },
+  ];
+
+  return Bill.aggregate(pipeline);
+}
+
 /** -------------------- 3) Top bàn (theo doanh thu & phút chơi) -------------------- */
 /**
  * Top bàn theo tổng tiền & tổng phút chơi.
@@ -399,7 +469,8 @@ async function revenueByPaymentMethod({
 module.exports = {
   ensureRange,
   summaryReport,
-  revenueTimeseries,
+  revenueTimeseries,   // theo ngày (cũ)
+  revenueSeries,       // ngày / tháng (mới thêm)
   topTables,
   topProducts,
   revenueByStaff,

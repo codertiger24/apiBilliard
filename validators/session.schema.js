@@ -101,7 +101,7 @@ module.exports.checkout = {
     discountLines: Joi.array().items(discountLine).default([]),
     surcharge: Joi.number().min(0).default(0),
     paymentMethod: Joi.string().valid(...PAYMENT_METHODS).default('cash'),
-    paid: Joi.boolean().default(true),
+    paid: Joi.boolean().default(false),
     note: Joi.string().trim().max(300).allow('', null).optional(),
   }),
 };

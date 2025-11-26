@@ -325,7 +325,7 @@ exports.checkout = R.asyncHandler(async (req, res) => {
     discountLines = [],
     surcharge = 0,
     paymentMethod = 'cash',
-    paid = true,
+    paid = false,
     note,
   } = req.body;
 
