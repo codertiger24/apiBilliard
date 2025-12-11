@@ -12,6 +12,8 @@ const SessionItemSchema = new Schema(
     priceSnapshot: { type: Number, required: true, min: 0 },    // giá tại thời điểm thêm
     qty: { type: Number, required: true, min: 1, default: 1 },
     note: { type: String, trim: true, default: '' },
+      // **Ảnh snapshot tại thời điểm thêm** (tùy chọn, lưu URL)
+    imageSnapshot: { type: String, default: null },
   },
   { _id: true }
 );

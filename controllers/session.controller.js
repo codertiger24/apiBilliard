@@ -222,22 +222,28 @@ exports.addItem = R.asyncHandler(async (req, res) => {
   if (!sess) return R.fail(res, 404, 'Session not found');
   if (sess.status !== 'open') return R.fail(res, 409, 'Session already closed/void');
 
-  const prod = await Product.findById(productId).select('name price unit active');
-  if (!prod || prod.active === false) return R.fail(res, 400, 'Product not available');
+ const prod = await Product.findById(productId).select('name price unit active images');
+if (!prod || prod.active === false) return R.fail(res, 400, 'Product not available');
 
-  const exist = sess.items.find((i) => String(i.product) === String(prod._id));
-  if (exist) {
-    exist.qty = Number(exist.qty || 0) + Number(qty || 0);
-    if (typeof note !== 'undefined') exist.note = note;
-  } else {
-    sess.items.push({
-      product: prod._id,
-      nameSnapshot: prod.name,
-      priceSnapshot: prod.price,
-      qty: Number(qty || 1),
-      note: note || '',
-    });
-  }
+const imageSnapshot = Array.isArray(prod.images) && prod.images.length ? prod.images[0] : null;
+
+const exist = sess.items.find((i) => String(i.product) === String(prod._id));
+if (exist) {
+  exist.qty = Number(exist.qty || 0) + Number(qty || 0);
+  if (typeof note !== 'undefined') exist.note = note;
+  // nếu chưa có imageSnapshot trên item và prod có ảnh, cập nhật (tùy chọn)
+  if (!exist.imageSnapshot && imageSnapshot) exist.imageSnapshot = imageSnapshot;
+} else {
+  sess.items.push({
+    product: prod._id,
+    nameSnapshot: prod.name,
+    priceSnapshot: prod.price,
+    qty: Number(qty || 1),
+    note: note || '',
+    imageSnapshot, // <-- lưu snapshot ảnh
+  });
+}
+
 
   await sess.save();
 

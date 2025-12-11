@@ -36,11 +36,13 @@ async function attachOpenSessionInfo(tables) {
   if (!tables || !tables.length) return tables;
   const ids = tables.map((t) => t._id);
   const sessions = await Session.find({
-    table: { $in: ids },
-    status: 'open',
-  })
-    .select('_id table startTime items')
-    .lean();
+  table: { $in: ids },
+  status: 'open',
+})
+  .select('_id table startTime items')
+  .populate('items.product', 'name price images')
+  .lean();
+
 
   const map = new Map();
   sessions.forEach((s) => map.set(String(s.table), s));
@@ -107,17 +109,34 @@ exports.getOne = R.asyncHandler(async (req, res) => {
   const table = await Table.findById(id).populate('areaId', 'name code').lean();
   if (!table) return R.fail(res, 404, 'Table not found');
 
-  // phiên đang mở (nếu có)
-  const sess = await Session.findOne({ table: id, status: 'open' })
-    .select('_id startTime items')
-    .lean();
+const sess = await Session.findOne({ table: id, status: 'open' })
+  .select('_id startTime items')
+  .populate('items.product', 'name price images')  // lấy images
+  .lean();
 
-  const data = sanitize({
-    ...table,
-    currentSession: sess
-      ? { id: sess._id, startTime: sess.startTime, itemsCount: sess.items?.length || 0 }
-      : null,
-  });
+const items = (sess?.items || []).map(it => ({
+  _id: it._id,
+  product: it.product
+    ? {
+        _id: it.product._id,
+        name: it.product.name,
+        price: it.product.price,
+        images: it.product.images || [],
+      }
+    : null,
+  nameSnapshot: it.nameSnapshot,
+  priceSnapshot: it.priceSnapshot,
+  imageSnapshot: it.imageSnapshot || (it.product?.images?.[0] || null),
+  qty: it.qty,
+  note: it.note || '',
+}));
+
+const data = sanitize({
+  ...table,
+  currentSession: sess ? { id: sess._id, startTime: sess.startTime, items } : null,
+});
+
+
 
   return R.ok(res, data);
 });
